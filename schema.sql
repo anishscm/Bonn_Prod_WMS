@@ -1,32 +1,20 @@
--- PostgreSQL / Supabase Full Schema for Bonn_Prod_WMS
+-- Comprehensive PostgreSQL / Supabase / SQLite Schema for Bonn_Prod_WMS
+-- Supports all 17 Google Sheet tabs and background WMS modules
 
--- 1. USER_AUTH Table (Matches Google Sheets USER_AUTH Headers 100%)
-DROP TABLE IF EXISTS user_auth CASCADE;
-CREATE TABLE user_auth (
+-- 1. USER_AUTH
+CREATE TABLE IF NOT EXISTS user_auth (
     "User ID" TEXT PRIMARY KEY,
     "Name" TEXT,
     "Password" TEXT,
     "Assigned Warehouses" TEXT,
-    "Admin_UserAuth" TEXT DEFAULT 'NO',
-    "Admin_ActivityLog" TEXT DEFAULT 'NO',
-    "Admin_ResetData" TEXT DEFAULT 'NO',
-    "Setup_BinMaster" TEXT DEFAULT 'NO',
-    "Setup_ProductMaster" TEXT DEFAULT 'NO',
-    "Sales_StkDump" TEXT DEFAULT 'NO',
-    "Sales_OrderChecker" TEXT DEFAULT 'NO',
-    "Sales_ShortageChecker" TEXT DEFAULT 'NO',
-    "Sales_AllocationView" TEXT DEFAULT 'NO',
-    "Sales_ConfirmOutbound" TEXT DEFAULT 'NO',
-    "Receipts_ASN" TEXT DEFAULT 'NO',
-    "Receipts_CreateInbound" TEXT DEFAULT 'NO',
-    "Receipts_ConfirmInbound" TEXT DEFAULT 'NO',
-    "Receipts_InboundReport" TEXT DEFAULT 'NO',
-    "Inventory_Reconciliation" TEXT DEFAULT 'NO',
-    "Inventory_Enquiry" TEXT DEFAULT 'NO',
-    "Inventory_Reports" TEXT DEFAULT 'NO'
+    "Admin_UserAuth" TEXT DEFAULT 'NO', "Admin_ActivityLog" TEXT DEFAULT 'NO', "Admin_ResetData" TEXT DEFAULT 'NO',
+    "Setup_BinMaster" TEXT DEFAULT 'NO', "Setup_ProductMaster" TEXT DEFAULT 'NO',
+    "Sales_StkDump" TEXT DEFAULT 'NO', "Sales_OrderChecker" TEXT DEFAULT 'NO', "Sales_ShortageChecker" TEXT DEFAULT 'NO', "Sales_AllocationView" TEXT DEFAULT 'NO', "Sales_ConfirmOutbound" TEXT DEFAULT 'NO',
+    "Receipts_ASN" TEXT DEFAULT 'NO', "Receipts_CreateInbound" TEXT DEFAULT 'NO', "Receipts_ConfirmInbound" TEXT DEFAULT 'NO', "Receipts_InboundReport" TEXT DEFAULT 'NO',
+    "Inventory_Reconciliation" TEXT DEFAULT 'NO', "Inventory_Enquiry" TEXT DEFAULT 'NO', "Inventory_Reports" TEXT DEFAULT 'NO'
 );
 
--- 2. PARTY_MASTER Table (Contractors, Supervisors, Transport Name, GST)
+-- 2. PARTY_MASTER
 CREATE TABLE IF NOT EXISTS party_master (
     id SERIAL PRIMARY KEY,
     contractor_name TEXT,
@@ -36,65 +24,311 @@ CREATE TABLE IF NOT EXISTS party_master (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. OPERATION_SHEET Table (Outbound Orders & Dispatches)
+-- 3. WH_MASTERS
+CREATE TABLE IF NOT EXISTS wh_masters (
+    wh_code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    plant TEXT,
+    sloc TEXT,
+    location TEXT,
+    is_active INT DEFAULT 1
+);
+
+-- 4. BIN_MASTERS
+CREATE TABLE IF NOT EXISTS bin_masters (
+    bin_code TEXT PRIMARY KEY,
+    wh_code TEXT,
+    zone TEXT,
+    type TEXT,
+    max_capacity NUMERIC(10,2) DEFAULT 1000,
+    status TEXT DEFAULT 'Available'
+);
+
+-- 5. SKU_MASTERS
+CREATE TABLE IF NOT EXISTS sku_masters (
+    sku_code TEXT PRIMARY KEY,
+    sku_name TEXT NOT NULL,
+    description TEXT,
+    uom TEXT DEFAULT 'PCS',
+    plant TEXT,
+    sloc TEXT,
+    category TEXT,
+    unit_weight_kg NUMERIC(10,3) DEFAULT 0.4
+);
+
+-- 6. MAIL_MASTERS
+CREATE TABLE IF NOT EXISTS mail_masters (
+    id SERIAL PRIMARY KEY,
+    module TEXT,
+    email TEXT,
+    warehouse TEXT,
+    short_excess_mail TEXT DEFAULT 'NO',
+    remark_trail_mail TEXT DEFAULT 'NO'
+);
+
+-- 7. SAP_STK_DUMP
+CREATE TABLE IF NOT EXISTS sap_stk_dump (
+    id SERIAL PRIMARY KEY,
+    warehouse TEXT,
+    sloc TEXT,
+    material_code TEXT,
+    material_desc TEXT,
+    batch_json TEXT,
+    total_unrestricted NUMERIC(10,2) DEFAULT 0,
+    total_transit NUMERIC(10,2) DEFAULT 0,
+    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 8. SAP_STK_ALLOCATION
+CREATE TABLE IF NOT EXISTS sap_stk_allocation (
+    id SERIAL PRIMARY KEY,
+    warehouse TEXT,
+    timestamp TEXT,
+    so_no TEXT,
+    so_date TEXT,
+    party_name TEXT,
+    reference TEXT,
+    sku_code TEXT,
+    inhand_alloc NUMERIC(10,2) DEFAULT 0,
+    transit_alloc NUMERIC(10,2) DEFAULT 0,
+    updated_by TEXT
+);
+
+-- 9. PARTIAL_CLEAR_ORDERS
+CREATE TABLE IF NOT EXISTS partial_clear_orders (
+    id SERIAL PRIMARY KEY,
+    warehouse TEXT,
+    so_no TEXT,
+    so_date TEXT,
+    party_name TEXT,
+    reference TEXT,
+    submit_time TEXT,
+    clear_lines_json TEXT,
+    obd TEXT,
+    pgi TEXT,
+    updated_by TEXT
+);
+
+-- 10. SHORTAGE_PARTIAL
+CREATE TABLE IF NOT EXISTS shortage_partial (
+    id SERIAL PRIMARY KEY,
+    warehouse TEXT,
+    so_no TEXT,
+    party_name TEXT,
+    so_date TEXT,
+    sku_code TEXT,
+    description TEXT,
+    req_qty NUMERIC(10,2) DEFAULT 0,
+    avail_inhand NUMERIC(10,2) DEFAULT 0,
+    short_bt NUMERIC(10,2) DEFAULT 0,
+    status_bt TEXT,
+    transit_used NUMERIC(10,2) DEFAULT 0,
+    short_at NUMERIC(10,2) DEFAULT 0,
+    status_at TEXT,
+    submit_time TEXT,
+    updated_by TEXT
+);
+
+-- 11. CLEAR_ORDER
+CREATE TABLE IF NOT EXISTS clear_order (
+    id SERIAL PRIMARY KEY,
+    warehouse TEXT,
+    so_no TEXT,
+    so_date TEXT,
+    party_name TEXT,
+    reference TEXT,
+    submit_time TEXT,
+    obd TEXT,
+    pgi TEXT,
+    total_lines INT DEFAULT 0,
+    lines_json TEXT,
+    dump_updated_post_pgi TEXT DEFAULT 'NO',
+    updated_by TEXT
+);
+
+-- 12. ORDER_CHECKER
+CREATE TABLE IF NOT EXISTS order_checker (
+    id SERIAL PRIMARY KEY,
+    order_no TEXT,
+    doc_date TEXT,
+    sold_to_party TEXT,
+    customer_name TEXT,
+    cust_ref TEXT,
+    lines_json TEXT,
+    plant TEXT,
+    total_order_qty NUMERIC(10,2) DEFAULT 0,
+    shortage_qty NUMERIC(10,2) DEFAULT 0,
+    alloc_remark TEXT,
+    shortage_remark TEXT,
+    status TEXT,
+    vehicle_no TEXT,
+    driver_no TEXT,
+    tpt_name TEXT,
+    dispatch_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 13. OPERATION_SHEET
 CREATE TABLE IF NOT EXISTS operation_sheet (
     id SERIAL PRIMARY KEY,
-    order_no TEXT NOT NULL UNIQUE,
+    plant TEXT,
+    dist_channel TEXT,
+    order_no TEXT UNIQUE NOT NULL,
+    order_date TEXT,
     customer_name TEXT,
+    cust_ref TEXT,
     sku_code TEXT,
     ordered_qty NUMERIC(10,2) DEFAULT 0,
+    shortage_qty NUMERIC(10,2) DEFAULT 0,
+    alloc_remark TEXT,
+    shortage_remark TEXT,
+    obd TEXT,
     status TEXT DEFAULT 'Picking',
     vehicle_no TEXT,
     driver_no TEXT,
     tpt_name TEXT,
     tpt_gst TEXT,
-    gst_shortage_reason TEXT,
+    dispatch_qty NUMERIC(10,2) DEFAULT 0,
+    shortage_reason TEXT,
     loading_supervisor TEXT,
     billing_supervisor TEXT,
     shift TEXT,
-    loading_date DATE,
+    loading_date TEXT,
     contractor_name TEXT,
     loading_start_time TEXT,
     loading_end_time TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 4. SAP_STK_DUMP Table (Uploaded SAP Excel Dump Records)
-CREATE TABLE IF NOT EXISTS sap_stk_dump (
-    id SERIAL PRIMARY KEY,
-    material_code TEXT,
-    material_desc TEXT,
-    batch TEXT,
-    plant TEXT,
-    total_qty NUMERIC(10,2) DEFAULT 0,
-    allocated_qty NUMERIC(10,2) DEFAULT 0,
-    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- 5. PHY_STK_ALLOCATION Table
+-- 14. PHY_STK_ALLOCATION
 CREATE TABLE IF NOT EXISTS phy_stk_allocation (
     id SERIAL PRIMARY KEY,
+    warehouse TEXT,
+    timestamp TEXT,
     order_no TEXT NOT NULL,
     sku_code TEXT NOT NULL,
     bin_no TEXT NOT NULL,
     allocated_qty NUMERIC(10,2) DEFAULT 0,
-    month_year TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    mfg_month TEXT,
+    updated_by TEXT
 );
 
--- 6. PHY_STK_ENTRY Table (Physical Bin Inventory Balances)
+-- 15. PHY_STK_ENTRY
 CREATE TABLE IF NOT EXISTS phy_stk_entry (
     id SERIAL PRIMARY KEY,
+    mfg_month TEXT,
     bin_no TEXT NOT NULL,
     sku_code TEXT NOT NULL,
+    product_name TEXT,
     available_qty NUMERIC(10,2) DEFAULT 0,
-    mfg_line TEXT,
-    batch_no TEXT,
-    expiry_date DATE,
+    computation_logic TEXT,
+    plant TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Performance Indexes (< 2ms)
+-- 16. BIN_TXIN
+CREATE TABLE IF NOT EXISTS bin_txin (
+    id SERIAL PRIMARY KEY,
+    warehouse TEXT,
+    timestamp TEXT,
+    from_bin TEXT NOT NULL,
+    to_bin TEXT,
+    sku_code TEXT NOT NULL,
+    transfer_qty NUMERIC(10,2) DEFAULT 0,
+    batch TEXT,
+    tx_type TEXT,
+    doc_no TEXT,
+    performed_by TEXT
+);
+
+-- 17. OUTWARD_MIS
+CREATE TABLE IF NOT EXISTS outward_mis (
+    id SERIAL PRIMARY KEY,
+    plant TEXT,
+    order_no TEXT,
+    order_date TEXT,
+    customer_name TEXT,
+    cust_ref TEXT,
+    order_qty NUMERIC(10,2) DEFAULT 0,
+    shortage_qty NUMERIC(10,2) DEFAULT 0,
+    alloc_remark TEXT,
+    shortage_remark TEXT,
+    order_status TEXT,
+    vehicle_no TEXT,
+    driver_no TEXT,
+    tpt_name TEXT,
+    sku_code TEXT,
+    description TEXT,
+    batch TEXT,
+    pgi_qty NUMERIC(10,2) DEFAULT 0,
+    dispatch_qty NUMERIC(10,2) DEFAULT 0,
+    shortage_reason TEXT,
+    loading_supervisor TEXT,
+    billing_supervisor TEXT,
+    shift TEXT,
+    loading_date TEXT,
+    contractor_name TEXT,
+    loading_start_time TEXT,
+    loading_end_time TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 18. INWARD_MIS
+CREATE TABLE IF NOT EXISTS inward_mis (
+    id SERIAL PRIMARY KEY,
+    plant_code TEXT,
+    print_datetime TEXT,
+    obd_mat_doc TEXT,
+    invoice_num TEXT,
+    invoice_date TEXT,
+    vehicle_no TEXT,
+    material_code TEXT,
+    material_desc TEXT,
+    billed_batch TEXT,
+    bill_qty NUMERIC(10,2) DEFAULT 0,
+    phy_batch TEXT,
+    phy_qty NUMERIC(10,2) DEFAULT 0,
+    short_excess NUMERIC(10,2) DEFAULT 0,
+    bin TEXT,
+    status TEXT,
+    supervisor_name TEXT,
+    deo TEXT,
+    contractor_name TEXT,
+    start_time TEXT,
+    end_time TEXT,
+    dock_num TEXT,
+    shift TEXT,
+    confirmation_datetime TEXT,
+    grn_num TEXT,
+    line_status TEXT,
+    unloading_date TEXT,
+    loading_supervisor_name TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 19. ASN
+CREATE TABLE IF NOT EXISTS asn (
+    id SERIAL PRIMARY KEY,
+    asn_datetime TEXT,
+    asn_no TEXT UNIQUE NOT NULL,
+    sup_plant TEXT,
+    rec_plant TEXT,
+    vehicle_no TEXT,
+    material_code TEXT,
+    qty NUMERIC(10,2) DEFAULT 0,
+    remark TEXT,
+    invoice_num TEXT,
+    invoice_date TEXT,
+    material_desc TEXT,
+    billed_batch TEXT,
+    loading_supervisor TEXT,
+    status TEXT DEFAULT 'Pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for lightning fast lookups
 CREATE INDEX IF NOT EXISTS idx_op_status ON operation_sheet(status);
+CREATE INDEX IF NOT EXISTS idx_op_plant ON operation_sheet(plant);
 CREATE INDEX IF NOT EXISTS idx_alloc_order ON phy_stk_allocation(order_no);
 CREATE INDEX IF NOT EXISTS idx_stk_sku_bin ON phy_stk_entry(sku_code, bin_no);
+CREATE INDEX IF NOT EXISTS idx_dump_mat ON sap_stk_dump(material_code, warehouse);
+CREATE INDEX IF NOT EXISTS idx_asn_no ON asn(asn_no);

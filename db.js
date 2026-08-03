@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const connectionString = process.env.DATABASE_URL;
@@ -64,7 +65,34 @@ function query(sql, params = []) {
 }
 
 function initDb() {
-  return Promise.resolve();
+  return new Promise((resolve) => {
+    try {
+      const schemaPath = path.join(__dirname, 'schema.sql');
+      if (fs.existsSync(schemaPath)) {
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        if (isPg && pool) {
+          pool.query(schemaSql, (err) => {
+            if (err) console.error('[DB PG Init Warning]:', err.message);
+            else console.log('[DB PG Init] Schema initialized successfully');
+            resolve();
+          });
+        } else if (sqliteDb) {
+          sqliteDb.exec(schemaSql, (err) => {
+            if (err) console.error('[DB SQLite Init Warning]:', err.message);
+            else console.log('[DB SQLite Init] Schema initialized successfully');
+            resolve();
+          });
+        } else {
+          resolve();
+        }
+      } else {
+        resolve();
+      }
+    } catch (e) {
+      console.error('[DB Init Error]:', e.message);
+      resolve();
+    }
+  });
 }
 
 module.exports = { query, isPg, initDb };
