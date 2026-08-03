@@ -39,7 +39,6 @@ const DEFAULT_AUTH_HEADERS = [
   "Inventory_Reconciliation", "Inventory_Enquiry", "Inventory_Reports"
 ];
 
-let cachedSapDump = [];
 let lastDumpUpdatedAt = new Date().toISOString();
 
 function _norm(v) {
@@ -74,7 +73,7 @@ function fc(headerRow, keys) {
 
 // =================================================================
 // UNIVERSAL HIGH-PERFORMANCE SQL BRIDGE ENGINE
-// Preserving 100% of Google Apps Script (Code_Prod_WMS.gs) Logic
+// Preserving 100% of Google Apps Script (Code_Prod_WMS.gs) Data Structures
 // =================================================================
 app.post('/api/gas-bridge', async (req, res) => {
   const { fn, args = [] } = req.body;
@@ -146,7 +145,7 @@ app.post('/api/gas-bridge', async (req, res) => {
         const users = rows.map(r => {
           const userObj = {};
           DEFAULT_AUTH_HEADERS.forEach(h => {
-            userObj[h] = (r[h] !== undefined && r[h] !== null) ? r[h].toString() : (h === "User ID" ? r.user_id || 'user' : 'NO');
+            userObj[h] = (r[h] !== undefined && r[h] !== null) ? r[h].toString() : (h === "User ID" ? r.user_id || r["User ID"] || 'user' : 'NO');
           });
           return userObj;
         });
@@ -211,19 +210,7 @@ app.post('/api/gas-bridge', async (req, res) => {
       // -------------------------------------------------------------
       // 2. MASTER DATA & LOOKUPS
       // -------------------------------------------------------------
-      case 'getMasterData': {
-        const skus = await query('SELECT * FROM sku_masters');
-        const bins = await query('SELECT * FROM bin_masters');
-        const warehouses = await query('SELECT * FROM wh_masters');
-        const mails = await query('SELECT * FROM mail_masters');
-        return res.json({
-          success: true,
-          result: {
-            skus, bins, warehouses, mails
-          }
-        });
-      }
-
+      case 'getMasterData':
       case 'ocGetPartyMaster':
       case 'getPartyMaster': {
         const rows = await query('SELECT * FROM party_master');
@@ -233,7 +220,25 @@ app.post('/api/gas-bridge', async (req, res) => {
           name: r.tpt_name,
           gst: r.tpt_gst || ''
         }));
-        return res.json({ success: true, result: { contractors, supervisors, tptList } });
+
+        const skus = await query('SELECT * FROM sku_masters');
+        const bins = await query('SELECT * FROM bin_masters');
+        const warehouses = await query('SELECT * FROM wh_masters');
+        const mails = await query('SELECT * FROM mail_masters');
+
+        return res.json({
+          success: true,
+          result: {
+            status: "SUCCESS",
+            contractors,
+            supervisors,
+            tptList,
+            skus,
+            bins,
+            warehouses,
+            mails
+          }
+        });
       }
 
       // -------------------------------------------------------------
@@ -325,7 +330,6 @@ app.post('/api/gas-bridge', async (req, res) => {
           ]);
         });
 
-        cachedSapDump = writeRows;
         lastDumpUpdatedAt = new Date().toISOString();
 
         res.json({
@@ -357,16 +361,24 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'ocGetDumpExport':
       case 'getDumpStatus':
       case 'loadRealTimeStkDump': {
+        const warehouse = args[0] || 'BB04';
         const dbDump = await query('SELECT warehouse, sloc, material_code, material_desc, batch_json, total_unrestricted, total_transit FROM sap_stk_dump');
-        let dumpResult = cachedSapDump;
-        if (dbDump && dbDump.length > 0) {
-          dumpResult = dbDump.map(r => [r.warehouse, r.sloc, r.material_code, r.material_desc, r.batch_json, r.total_unrestricted, r.total_transit]);
-        }
+        
+        const formattedRows = dbDump.map(r => ({
+          warehouse: r.warehouse || warehouse,
+          sloc: r.sloc || '',
+          material: r.material_code || r.material || '',
+          description: r.material_desc || r.description || '',
+          batchQty: r.batch_json || r.batchQty || '[]',
+          totalUnrestricted: Number(r.total_unrestricted) || 0,
+          totalTransit: Number(r.total_transit) || 0
+        }));
+
         return res.json({
           success: true,
           result: {
             status: "SUCCESS",
-            rows: dumpResult,
+            rows: formattedRows,
             updatedAt: lastDumpUpdatedAt
           }
         });
@@ -426,7 +438,7 @@ app.post('/api/gas-bridge', async (req, res) => {
       }
 
       // -------------------------------------------------------------
-      // 4. ORDER PROCESSING & FIFO ALLOCATION
+      // 4. ORDER PROCESSING & ALLOCATION
       // -------------------------------------------------------------
       case 'ocSubmitClearOrder':
       case 'ocBulkSubmitOrdersWIAloc': {
@@ -468,7 +480,6 @@ app.post('/api/gas-bridge', async (req, res) => {
               allocated += allocQty;
             }
 
-            // Shortage recording if stock < requested
             if (allocated < reqQty) {
               const shortQty = reqQty - allocated;
               await query(
@@ -557,8 +568,53 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'getPickingOrders':
       case 'getOutboundOrders': {
         const warehouse = args[0] || 'BB04';
-        const orders = await query('SELECT * FROM operation_sheet WHERE plant = ? OR plant IS NULL ORDER BY id DESC', [warehouse]);
-        return res.json({ success: true, result: orders });
+        const headers = [
+          "Plant", "Distribution Channel", "Sales Document", "Order Date", "Customer Name",
+          "Customer Ref No", "Order Qty", "Shortage Qty", "Allocation Remark", "Shortage Remark",
+          "OBD", "Order Status", "Vehicle Number", "Driver Number", "TPT Name",
+          "Dispatch Qty", "Shortage reason", "Loading Supervisor", "Billing Supervisor", "Shift",
+          "Loading Date", "Contractor Name", "Loading Start Time", "Loading End Time"
+        ];
+
+        const orders = await query('SELECT * FROM operation_sheet ORDER BY id DESC');
+        const rows = orders.map((r, idx) => ({
+          rowIndex: idx + 2,
+          data: [
+            r.plant || warehouse,
+            r.dist_channel || '10',
+            r.order_no || '',
+            r.order_date || '',
+            r.customer_name || '',
+            r.cust_ref || '',
+            Number(r.ordered_qty) || 0,
+            Number(r.shortage_qty) || 0,
+            r.alloc_remark || '',
+            r.shortage_remark || '',
+            r.obd || '',
+            r.status || 'Picking',
+            r.vehicle_no || '',
+            r.driver_no || '',
+            r.tpt_name || '',
+            Number(r.dispatch_qty) || 0,
+            r.shortage_reason || '',
+            r.loading_supervisor || '',
+            r.billing_supervisor || '',
+            r.shift || 'Day Shift',
+            r.loading_date || '',
+            r.contractor_name || '',
+            r.loading_start_time || '',
+            r.loading_end_time || ''
+          ]
+        }));
+
+        return res.json({
+          success: true,
+          result: {
+            status: "OK",
+            headers: headers,
+            rows: rows
+          }
+        });
       }
 
       case 'opPreviewOutboundPickList': {
@@ -682,7 +738,43 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'iwGetAsnReport':
       case 'iwLoadAllInwardMisData': {
         const reports = await query('SELECT * FROM inward_mis ORDER BY id DESC LIMIT 200');
-        return res.json({ success: true, result: reports });
+        const dataArr = reports.map(r => [
+          r.plant_code || 'BB04',
+          r.print_datetime || '',
+          r.obd_mat_doc || '',
+          r.invoice_num || '',
+          r.invoice_date || '',
+          r.vehicle_no || '',
+          r.material_code || '',
+          r.material_desc || '',
+          r.billed_batch || '',
+          r.bill_qty || 0,
+          r.phy_batch || '',
+          r.phy_qty || 0,
+          r.short_excess || 0,
+          r.bin || '',
+          r.status || '',
+          r.supervisor_name || '',
+          r.deo || '',
+          r.contractor_name || '',
+          r.start_time || '',
+          r.end_time || '',
+          r.dock_num || '',
+          r.shift || '',
+          r.confirmation_datetime || '',
+          r.grn_num || '',
+          r.line_status || '',
+          r.unloading_date || '',
+          r.loading_supervisor_name || ''
+        ]);
+
+        return res.json({
+          success: true,
+          result: {
+            status: "SUCCESS",
+            data: dataArr
+          }
+        });
       }
 
       // -------------------------------------------------------------
