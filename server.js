@@ -193,6 +193,7 @@ app.post('/api/gas-bridge', async (req, res) => {
       }
 
       case 'wmsResetSalesData':
+      case 'ocResetAllSheets':
       case 'ocResetAllTransactionalSheets': {
         await query('DELETE FROM operation_sheet');
         await query('DELETE FROM order_checker');
@@ -204,7 +205,21 @@ app.post('/api/gas-bridge', async (req, res) => {
         await query('DELETE FROM asn');
         await query('DELETE FROM inward_mis');
         await query('DELETE FROM bin_txin');
-        return res.json({ success: true, result: { status: "SUCCESS", message: "All transactional data reset!" } });
+        return res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            counts: {
+              "SAP_STK_DUMP": 0,
+              "SAP_STK_ALLOCATION": 0,
+              "Partial Clear Orders": 0,
+              "Shortage in Partial Clear Orders": 0,
+              "Clear Order": 0,
+              "ORDER_CHECKER": 0
+            },
+            message: "All transactional data reset successfully!"
+          }
+        });
       }
 
       // -------------------------------------------------------------
