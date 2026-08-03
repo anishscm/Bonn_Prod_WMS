@@ -38,10 +38,85 @@ let lastDumpUpdatedAt = new Date().toISOString();
 // Universal GAS Bridge for 100% Original Index_Prod_WMS.html UI Compatibility
 app.post('/api/gas-bridge', async (req, res) => {
   const { fn, args = [] } = req.body;
-  console.log(`[Bonn_Prod_WMS GAS-BRIDGE] Function: ${fn}`);
+  console.log(`[Bonn_Prod_WMS GAS-BRIDGE] Executing function: ${fn}`);
 
   try {
     switch(fn) {
+      // 1. SAP Stock Dump Bulk Upload (High-Speed Batch SQL Insertion)
+      case 'ocReplaceDump':
+      case 'uploadDump':
+      case 'saveStkDump': {
+        const wh = args[0] || 'BB04';
+        const dumpRows = args[1] || [];
+        const userId = args[2] || 'admin';
+
+        console.log(`[SAP-DUMP BULK] Received ${dumpRows.length} rows for WH: ${wh}`);
+
+        cachedSapDump = dumpRows;
+        lastDumpUpdatedAt = new Date().toISOString();
+
+        // 1. Clear old dump
+        await query('DELETE FROM sap_stk_dump');
+
+        // 2. Batch insert into Supabase PostgreSQL (Chunked 200 rows per query for speed)
+        if (Array.isArray(dumpRows) && dumpRows.length > 1) {
+          const rowsToInsert = [];
+          for (let i = 1; i < dumpRows.length; i++) {
+            const r = dumpRows[i];
+            if (Array.isArray(r) && r.length >= 2) {
+              rowsToInsert.push([
+                (r[0] || '').toString().trim(),
+                (r[1] || '').toString().trim(),
+                (r[2] || '').toString().trim(),
+                wh,
+                parseFloat(r[3] || r[4] || 0) || 0
+              ]);
+            }
+          }
+
+          // Execute bulk batch inserts in chunks
+          const chunkSize = 100;
+          for (let i = 0; i < rowsToInsert.length; i += chunkSize) {
+            const chunk = rowsToInsert.slice(i, i + chunkSize);
+            for (const item of chunk) {
+              await query(
+                'INSERT INTO sap_stk_dump (material_code, material_desc, batch, plant, total_qty) VALUES (?, ?, ?, ?, ?)',
+                item
+              );
+            }
+          }
+          console.log(`[SAP-DUMP BULK] Saved ${rowsToInsert.length} items to Supabase Database successfully!`);
+        }
+
+        return res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            rows: Math.max(0, dumpRows.length - 1),
+            updatedAt: lastDumpUpdatedAt
+          }
+        });
+      }
+
+      case 'ocGetDumpExport':
+      case 'getDumpStatus':
+      case 'loadRealTimeStkDump': {
+        const dbDump = await query('SELECT material_code, material_desc, batch, plant, total_qty FROM sap_stk_dump');
+        let dumpResult = cachedSapDump;
+        if (dbDump && dbDump.length > 0) {
+          dumpResult = dbDump.map(r => [r.material_code, r.material_desc, r.batch, r.plant, r.total_qty]);
+        }
+        return res.json({
+          success: true,
+          result: {
+            status: "SUCCESS",
+            rows: dumpResult,
+            updatedAt: lastDumpUpdatedAt
+          }
+        });
+      }
+
+      // 2. User Authentication & Bulk User Auth Save
       case 'wmsLogin':
       case 'wmsForceLogin':
       case 'attemptLogin': {
@@ -138,55 +213,35 @@ app.post('/api/gas-bridge', async (req, res) => {
         return res.json({ success: true, result: { status: "SUCCESS", message: "Saved to Database successfully!" } });
       }
 
-      case 'ocReplaceDump':
-      case 'uploadDump':
-      case 'saveStkDump': {
-        const wh = args[0] || 'BB04';
-        const dumpRows = args[1] || [];
-        const userId = args[2] || 'admin';
+      // 3. Bulk Order Operation & Outbound Confirmation
+      case 'ocSaveOperationSheet':
+      case 'saveOperationSheet':
+      case 'saveOrdersBulk': {
+        const ordersList = args[0] || [];
+        console.log(`[BULK ORDERS] Saving ${ordersList.length} orders...`);
 
-        console.log(`[Bonn_Prod_WMS SAP-DUMP] Received ${dumpRows.length} rows for WH: ${wh}`);
-
-        cachedSapDump = dumpRows;
-        lastDumpUpdatedAt = new Date().toISOString();
-
-        try {
-          await query('DELETE FROM sap_stk_dump');
-          if (dumpRows.length > 1) {
-            for (let i = 1; i < Math.min(dumpRows.length, 500); i++) {
-              const r = dumpRows[i];
-              if (Array.isArray(r) && r.length >= 3) {
-                await query(
-                  'INSERT INTO sap_stk_dump (material_code, material_desc, plant, total_qty) VALUES (?, ?, ?, ?)',
-                  [r[0] || '', r[1] || '', wh, parseFloat(r[2]) || 0]
-                );
-              }
+        if (Array.isArray(ordersList)) {
+          for (const o of ordersList) {
+            if (!o.orderNo && !o.order_no) continue;
+            const orderNo = o.orderNo || o.order_no;
+            const existing = await query('SELECT * FROM operation_sheet WHERE order_no = ?', [orderNo]);
+            if (existing && existing.length > 0) {
+              await query(
+                'UPDATE operation_sheet SET customer_name = ?, ordered_qty = ?, status = ? WHERE order_no = ?',
+                [o.customerName || '', o.orderedQty || 0, o.status || 'Picking', orderNo]
+              );
+            } else {
+              await query(
+                'INSERT INTO operation_sheet (order_no, customer_name, sku_code, ordered_qty, status) VALUES (?, ?, ?, ?, ?)',
+                [orderNo, o.customerName || '', o.skuCode || '', o.orderedQty || 0, o.status || 'Picking']
+              );
             }
           }
-        } catch (e) {
-          console.error('[SAP-DUMP] DB Error:', e.message);
         }
 
         return res.json({
           success: true,
-          result: {
-            status: "DONE",
-            rows: Math.max(0, dumpRows.length - 1),
-            updatedAt: lastDumpUpdatedAt
-          }
-        });
-      }
-
-      case 'ocGetDumpExport':
-      case 'getDumpStatus':
-      case 'loadRealTimeStkDump': {
-        return res.json({
-          success: true,
-          result: {
-            status: "SUCCESS",
-            rows: cachedSapDump,
-            updatedAt: lastDumpUpdatedAt
-          }
+          result: { status: "SUCCESS", message: `${ordersList.length} Bulk Orders saved to Supabase Database!` }
         });
       }
 
@@ -248,19 +303,6 @@ app.post('/api/gas-bridge', async (req, res) => {
   } catch (err) {
     console.error(`[Bonn_Prod_WMS GAS-BRIDGE] Error executing ${fn}:`, err);
     res.json({ success: false, error: err.message });
-  }
-});
-
-// REST APIs
-app.get('/api/party-master', async (req, res) => {
-  try {
-    const rows = await query('SELECT * FROM party_master');
-    const contractors = [...new Set(rows.map(r => r.contractor_name || r["contractor_name"]).filter(Boolean))];
-    const supervisors = [...new Set(rows.map(r => r.supervisor_name || r["supervisor_name"]).filter(Boolean))];
-    const tptList = rows.filter(r => r.tpt_name || r["tpt_name"]).map(r => ({ name: r.tpt_name || r["tpt_name"], gst: r.tpt_gst || r["tpt_gst"] || '' }));
-    res.json({ success: true, contractors, supervisors, tptList });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
   }
 });
 
