@@ -73,7 +73,7 @@ function fc(headerRow, keys) {
 
 // =================================================================
 // UNIVERSAL HIGH-PERFORMANCE SQL BRIDGE ENGINE
-// Preserving 100% of Google Apps Script (Code_Prod_WMS.gs) Data Structures
+// Preserving 100% of Google Apps Script (Code_Prod_WMS.gs) Logic & Payloads
 // =================================================================
 app.post('/api/gas-bridge', async (req, res) => {
   const { fn, args = [] } = req.body;
@@ -438,29 +438,139 @@ app.post('/api/gas-bridge', async (req, res) => {
       }
 
       // -------------------------------------------------------------
-      // 4. ORDER PROCESSING & ALLOCATION
+      // 4. BULK ORDER PROCESSING & ALLOCATION ENGINE
       // -------------------------------------------------------------
-      case 'ocSubmitClearOrder':
-      case 'ocBulkSubmitOrdersWIAloc': {
+      case 'ocCheckDuplicateOrders': {
+        const warehouse = args[0] || 'BB04';
+        const soNumbers = Array.isArray(args[1]) ? args[1] : [args[1]];
+        const type = args[2] || '';
+
+        const existingRows = await query('SELECT order_no FROM operation_sheet');
+        const existingSet = new Set(existingRows.map(r => _norm(r.order_no)));
+
+        const duplicates = [];
+        soNumbers.forEach(so => {
+          const normSo = _norm(so);
+          if (existingSet.has(normSo)) {
+            duplicates.push(normSo);
+          }
+        });
+
+        return res.json({
+          success: true,
+          result: {
+            status: "SUCCESS",
+            duplicates: duplicates,
+            existingSOs: Array.from(existingSet)
+          }
+        });
+      }
+
+      case 'ocSubmitDirectOrder':
+      case 'ocBulkSubmitOrdersWOAloc': {
         const warehouse = args[0] || 'BB04';
         const ordersPayload = Array.isArray(args[1]) ? args[1] : [args[1]];
-        const userId = args[2] || 'admin';
+        const userId = args[3] || args[2] || 'admin';
+
+        const existingRows = await query('SELECT order_no FROM operation_sheet');
+        const existingSet = new Set(existingRows.map(r => _norm(r.order_no)));
+
+        const results = {};
+        let insertedCount = 0;
 
         for (const payload of ordersPayload) {
           if (!payload) continue;
-          const orderNo = payload.soNumber || payload.orderNo || 'SO_' + Date.now();
+          const soNum = _norm(payload.soNumber || payload.orderNo || '');
+          if (!soNum || !/^\d{6,}$/.test(soNum)) {
+            results[payload.soNumber || '?'] = { status: "INVALID_SO" };
+            continue;
+          }
+
+          const isUpdate = existingSet.has(soNum);
+          if (isUpdate) {
+            await query('DELETE FROM partial_clear_orders WHERE so_no = ?', [soNum]);
+            await query('DELETE FROM shortage_partial WHERE so_no = ?', [soNum]);
+            await query('DELETE FROM operation_sheet WHERE order_no = ?', [soNum]);
+          } else {
+            existingSet.add(soNum);
+          }
+
           const customerName = payload.partyName || payload.customerName || '';
+          const custRef = payload.destCity || payload.custRef || '';
+          const orderDate = payload.soDate || payload.orderDate || new Date().toISOString().split('T')[0];
           const lines = payload.lines || [];
 
           const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), qty: Number(l.qty) || 0, desc: l.desc || '' })));
           const totalQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
 
+          // Insert into operation_sheet
           await query(
-            'INSERT INTO operation_sheet (plant, order_no, customer_name, sku_code, ordered_qty, status) VALUES (?, ?, ?, ?, ?, ?)',
-            [warehouse, orderNo, customerName, linesJSON, totalQty, 'Picking']
+            'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalQty, 0, 'Without Allocation', 'Picking']
           );
 
-          // FIFO Stock Allocation
+          // Insert into order_checker
+          await query(
+            'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalQty, 0, 'Without Allocation', 'Submitted (W/O Aloc)']
+          );
+
+          results[soNum] = { status: "DONE", isUpdate: isUpdate, clearLines: lines.length, shortLines: 0 };
+          insertedCount++;
+        }
+
+        return res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            results: results,
+            rows: insertedCount,
+            message: `Bulk submit (W/O Aloc) processed ${insertedCount} orders cleanly in SQL database!`
+          }
+        });
+      }
+
+      case 'ocSubmitClearOrder':
+      case 'ocBulkSubmitOrdersWIAloc': {
+        const warehouse = args[0] || 'BB04';
+        const ordersPayload = Array.isArray(args[1]) ? args[1] : [args[1]];
+        const userId = args[3] || args[2] || 'admin';
+
+        const existingRows = await query('SELECT order_no FROM operation_sheet');
+        const existingSet = new Set(existingRows.map(r => _norm(r.order_no)));
+
+        const results = {};
+        let insertedCount = 0;
+
+        for (const payload of ordersPayload) {
+          if (!payload) continue;
+          const soNum = _norm(payload.soNumber || payload.orderNo || '');
+          if (!soNum || !/^\d{6,}$/.test(soNum)) {
+            results[payload.soNumber || '?'] = { status: "INVALID_SO" };
+            continue;
+          }
+
+          const isUpdate = existingSet.has(soNum);
+          if (isUpdate) {
+            await query('DELETE FROM phy_stk_allocation WHERE order_no = ?', [soNum]);
+            await query('DELETE FROM shortage_partial WHERE so_no = ?', [soNum]);
+            await query('DELETE FROM operation_sheet WHERE order_no = ?', [soNum]);
+          } else {
+            existingSet.add(soNum);
+          }
+
+          const customerName = payload.partyName || payload.customerName || '';
+          const custRef = payload.destCity || payload.custRef || '';
+          const orderDate = payload.soDate || payload.orderDate || new Date().toISOString().split('T')[0];
+          const lines = payload.lines || [];
+
+          const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), qty: Number(l.qty) || 0, desc: l.desc || '' })));
+          const totalQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+
+          let clearLinesCount = 0;
+          let shortLinesCount = 0;
+          let totalShortage = 0;
+
           for (const line of lines) {
             const sku = _norm(line.sku);
             const reqQty = Number(line.qty) || 0;
@@ -475,56 +585,49 @@ app.post('/api/gas-bridge', async (req, res) => {
 
               await query(
                 'INSERT INTO phy_stk_allocation (warehouse, order_no, sku_code, bin_no, allocated_qty, mfg_month, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, orderNo, sku, b.bin_no, allocQty, b.mfg_month || '', userId]
+                [warehouse, soNum, sku, b.bin_no, allocQty, b.mfg_month || '', userId]
               );
               allocated += allocQty;
             }
 
-            if (allocated < reqQty) {
+            if (allocated >= reqQty) {
+              clearLinesCount++;
+            } else {
+              shortLinesCount++;
               const shortQty = reqQty - allocated;
+              totalShortage += shortQty;
               await query(
                 'INSERT INTO shortage_partial (warehouse, so_no, party_name, sku_code, req_qty, avail_inhand, short_bt, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, orderNo, customerName, sku, reqQty, allocated, shortQty, userId]
+                [warehouse, soNum, customerName, sku, reqQty, allocated, shortQty, userId]
               );
             }
           }
 
+          const allocRemark = shortLinesCount > 0 ? (clearLinesCount > 0 ? "PARTIAL ALLOCATION" : "NO STOCK") : "FULL ALLOCATION";
+
           await query(
-            'INSERT INTO order_checker (order_no, customer_name, plant, total_order_qty, status) VALUES (?, ?, ?, ?, ?)',
-            [orderNo, customerName, warehouse, totalQty, 'Submitted (W/I Aloc)']
+            'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalQty, totalShortage, allocRemark, 'Picking']
           );
+
+          await query(
+            'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalQty, totalShortage, allocRemark, allocRemark]
+          );
+
+          results[soNum] = { status: "DONE", isUpdate: isUpdate, clearLines: clearLinesCount, shortLines: shortLinesCount };
+          insertedCount++;
         }
 
-        return res.json({ success: true, result: { status: "DONE", message: "Orders submitted WITH allocation to SQL Database!" } });
-      }
-
-      case 'ocSubmitDirectOrder':
-      case 'ocBulkSubmitOrdersWOAloc': {
-        const warehouse = args[0] || 'BB04';
-        const ordersPayload = Array.isArray(args[1]) ? args[1] : [args[1]];
-        const userId = args[2] || 'admin';
-
-        for (const payload of ordersPayload) {
-          if (!payload) continue;
-          const orderNo = payload.soNumber || payload.orderNo || 'SO_' + Date.now();
-          const customerName = payload.partyName || payload.customerName || '';
-          const lines = payload.lines || [];
-
-          const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), qty: Number(l.qty) || 0, desc: l.desc || '' })));
-          const totalQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
-
-          await query(
-            'INSERT INTO operation_sheet (plant, order_no, customer_name, sku_code, ordered_qty, status) VALUES (?, ?, ?, ?, ?, ?)',
-            [warehouse, orderNo, customerName, linesJSON, totalQty, 'Picking']
-          );
-
-          await query(
-            'INSERT INTO order_checker (order_no, customer_name, plant, total_order_qty, status) VALUES (?, ?, ?, ?, ?)',
-            [orderNo, customerName, warehouse, totalQty, 'Submitted (W/O Aloc)']
-          );
-        }
-
-        return res.json({ success: true, result: { status: "DONE", message: "Orders submitted WITHOUT allocation to SQL Database!" } });
+        return res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            results: results,
+            rows: insertedCount,
+            message: `Bulk submit (W/I Aloc) processed ${insertedCount} orders cleanly in SQL database!`
+          }
+        });
       }
 
       case 'ocSubmitPartialOrder': {
