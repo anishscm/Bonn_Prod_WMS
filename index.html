@@ -1,6 +1,7 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23e35205'/><text x='50' y='68' font-size='55' font-weight='800' font-family='system-ui, sans-serif' text-anchor='middle' fill='%23ffffff'>B</text></svg>">
 <script>
   /* High-Speed Cloud Server Bridge for Bonn_Prod_WMS */
   window.CLOUD_API_URL = window.location.origin.startsWith('file') ? 'https://bonn-wms-backend.onrender.com' : window.location.origin;
@@ -10744,7 +10745,8 @@ function iwPrintUnloadingSheet21(){
   inspItems.forEach(function(item,idx){ inspHtml+='<tr><td style="text-align:center;">'+(idx+1)+'</td><td>'+item+'</td><td></td><td></td><td></td></tr>'; });
   var obdTitle=activeObds.map(function(b){ return b.obd; }).join(', ');
 
-  var printHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Unloading Sheet - '+obdTitle+'</title>'+
+  var printHtml='<!DOCTYPE html><html><head>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23e35205'/><text x='50' y='68' font-size='55' font-weight='800' font-family='system-ui, sans-serif' text-anchor='middle' fill='%23ffffff'>B</text></svg>"><meta charset="UTF-8"><title>Unloading Sheet - '+obdTitle+'</title>'+
     '<style>body{font-family:Arial,sans-serif;margin:20px;font-size:11px;color:#000;}'+
     'table{border-collapse:collapse;width:100%;margin-bottom:10px;}'+
     'th,td{border:1px solid #000;padding:4px 6px;}'+
@@ -11403,7 +11405,8 @@ function iwReprintObd22(obdNo) {
       var inspHtml='';
       inspItems.forEach(function(item,idx){ inspHtml+='<tr><td style="text-align:center;">'+(idx+1)+'</td><td>'+item+'</td><td></td><td></td><td></td></tr>'; });
 
-      var printHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Unloading Sheet [REPRINT] - '+res.obd+'</title>'+
+      var printHtml = '<!DOCTYPE html><html><head>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23e35205'/><text x='50' y='68' font-size='55' font-weight='800' font-family='system-ui, sans-serif' text-anchor='middle' fill='%23ffffff'>B</text></svg>"><meta charset="UTF-8"><title>Unloading Sheet [REPRINT] - '+res.obd+'</title>'+
         '<style>body{font-family:Arial,sans-serif;margin:20px;font-size:11px;color:#000;}'+
         'table{border-collapse:collapse;width:100%;margin-bottom:10px;}'+
         'th,td{border:1px solid #000;padding:4px 6px;}'+
@@ -15623,7 +15626,8 @@ function opExecutePrintPickListWindow(payload) {
   var todayStr = payload.todayDate || "";
   var soListJson = JSON.stringify(opSelectedSoNumbers25);
 
-  var html = '<!DOCTYPE html><html><head><title>Bonn Pick List Print</title>';
+  var html = '<!DOCTYPE html><html><head>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23e35205'/><text x='50' y='68' font-size='55' font-weight='800' font-family='system-ui, sans-serif' text-anchor='middle' fill='%23ffffff'>B</text></svg>"><title>Bonn Pick List Print</title>';
   html += '<style>';
   html += 'body { font-family: Arial, sans-serif; color: #000; margin: 10px; padding-bottom: 30px; background: #fff; }';
   html += 'table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 11px; }';
