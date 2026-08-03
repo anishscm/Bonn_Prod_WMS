@@ -195,29 +195,51 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'wmsResetSalesData':
       case 'ocResetAllSheets':
       case 'ocResetAllTransactionalSheets': {
-        await query('DELETE FROM operation_sheet');
-        await query('DELETE FROM order_checker');
-        await query('DELETE FROM phy_stk_allocation');
+        // Query exact row counts before deleting
+        const resDump = await query('SELECT COUNT(*) as cnt FROM sap_stk_dump');
+        const resAlloc = await query('SELECT COUNT(*) as cnt FROM sap_stk_allocation');
+        const resPartial = await query('SELECT COUNT(*) as cnt FROM partial_clear_orders');
+        const resShort = await query('SELECT COUNT(*) as cnt FROM shortage_partial');
+        const resClear = await query('SELECT COUNT(*) as cnt FROM clear_order');
+        const resChecker = await query('SELECT COUNT(*) as cnt FROM order_checker');
+
+        const getCnt = (r) => r && r[0] ? Number(r[0].cnt || r[0]["COUNT(*)"] || 0) : 0;
+        const cntDump = getCnt(resDump);
+        const cntAlloc = getCnt(resAlloc);
+        const cntPartial = getCnt(resPartial);
+        const cntShort = getCnt(resShort);
+        const cntClear = getCnt(resClear);
+        const cntChecker = getCnt(resChecker);
+
+        // Delete from all sales transactional tables
+        await query('DELETE FROM sap_stk_dump');
+        await query('DELETE FROM sap_stk_allocation');
         await query('DELETE FROM partial_clear_orders');
         await query('DELETE FROM shortage_partial');
         await query('DELETE FROM clear_order');
+        await query('DELETE FROM order_checker');
+        await query('DELETE FROM operation_sheet');
+        await query('DELETE FROM phy_stk_allocation');
         await query('DELETE FROM outward_mis');
         await query('DELETE FROM asn');
         await query('DELETE FROM inward_mis');
         await query('DELETE FROM bin_txin');
+
+        lastDumpUpdatedAt = new Date().toISOString();
+
         return res.json({
           success: true,
           result: {
             status: "DONE",
             counts: {
-              "SAP_STK_DUMP": 0,
-              "SAP_STK_ALLOCATION": 0,
-              "Partial Clear Orders": 0,
-              "Shortage in Partial Clear Orders": 0,
-              "Clear Order": 0,
-              "ORDER_CHECKER": 0
+              "SAP_STK_DUMP": cntDump,
+              "SAP_STK_ALLOCATION": cntAlloc,
+              "Partial Clear Orders": cntPartial,
+              "Shortage in Partial Clear Orders": cntShort,
+              "Clear Order": cntClear,
+              "ORDER_CHECKER": cntChecker
             },
-            message: "All transactional data reset successfully!"
+            message: "All sales transactional data reset successfully!"
           }
         });
       }
