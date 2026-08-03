@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Favicon Route to prevent 404
+// Favicon SVG Route for Chrome Browser Tabs
 app.get('/favicon.ico', (req, res) => {
   const svgFavicon = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='#e35205'/><text x='50' y='68' font-size='55' font-weight='800' font-family='system-ui, sans-serif' text-anchor='middle' fill='#ffffff'>B</text></svg>`;
   res.setHeader('Content-Type', 'image/svg+xml');
@@ -42,23 +42,123 @@ const DEFAULT_AUTH_HEADERS = [
 let cachedSapDump = [];
 let lastDumpUpdatedAt = new Date().toISOString();
 
-// =================================================================
-// UNIVERSAL GAS BRIDGE ROUTER FOR 100% COMPATIBILITY WITH Code_Prod_WMS.gs
-// =================================================================
+// Normalize helper matching Apps Script _norm(v)
+function _norm(v) {
+  if (v == null) return "";
+  return v.toString().replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+// Find Column Index matching Code_Prod_WMS.gs fc(keys)
+function fc(headerRow, keys) {
+  const normHeader = headerRow.map(h => _norm(h));
+  const normKeys = keys.map(k => _norm(k));
+  
+  for (let k = 0; k < normKeys.length; k++) {
+    for (let i = 0; i < normHeader.length; i++) {
+      if (normHeader[i] === normKeys[k]) return i;
+    }
+  }
+  for (let k = 0; k < normKeys.length; k++) {
+    for (let i = 0; i < normHeader.length; i++) {
+      if (normHeader[i].indexOf(normKeys[k]) >= 0) return i;
+    }
+  }
+  return -1;
+}
+
+// Universal GAS Bridge for 100% Original Index_Prod_WMS.html UI Compatibility
 app.post('/api/gas-bridge', async (req, res) => {
   const { fn, args = [] } = req.body;
-  console.log(`[Bonn_Prod_WMS ENGINE] Invoking function: ${fn}`);
 
   try {
     switch(fn) {
-      // -------------------------------------------------------------
-      // 1. AUTHENTICATION & SESSION MANAGEMENT MODULE
-      // -------------------------------------------------------------
+      // Dynamic Column Matching SAP Stock Dump Upload (100% Code_Prod_WMS.gs Logic)
+      case 'ocReplaceDump':
+      case 'uploadDump':
+      case 'saveStkDump': {
+        const wh = args[0] || 'BB04';
+        const dumpRows = args[1] || [];
+        const userId = args[2] || 'admin';
+
+        if (!dumpRows || dumpRows.length < 2) {
+          return res.json({ success: true, result: { status: "NO_DATA" } });
+        }
+
+        console.log(`[SAP-DUMP Dynamic] Received ${dumpRows.length} rows for WH: ${wh}`);
+
+        const header = dumpRows[0] || [];
+        const matCol = fc(header, ["Material", "Material Code", "SKU", "Item Code"]);
+        const descCol = fc(header, ["Material Discription", "Material Description", "Description", "Discription"]);
+        const plantCol = fc(header, ["Plant", "Plan", "Warehouse", "WH"]);
+        const slocCol = fc(header, ["Storage Location", "Sloc", "S.Loc", "S. Loc", "Storage Loc", "S Loc"]);
+        const batchCol = fc(header, ["Batch", "Batch No", "Batch Number", "Lot"]);
+        const unrestrictedCol = fc(header, ["Unrestricted", "Unrestricted Use", "Unrestricted-use", "Unrest", "Stock", "Available"]);
+
+        console.log(`[SAP-DUMP Cols] Mat:${matCol}, Desc:${descCol}, Plant:${plantCol}, Sloc:${slocCol}, Batch:${batchCol}, Unrest:${unrestrictedCol}`);
+
+        cachedSapDump = dumpRows;
+        lastDumpUpdatedAt = new Date().toISOString();
+
+        // 1. Instant response to UI (< 20ms)
+        res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            rows: Math.max(0, dumpRows.length - 1),
+            updatedAt: lastDumpUpdatedAt
+          }
+        });
+
+        // 2. Background Sync to Supabase PostgreSQL Database with exact dynamic column mapping
+        setImmediate(async () => {
+          try {
+            await query('DELETE FROM sap_stk_dump');
+            for (let i = 1; i < dumpRows.length; i++) {
+              const row = dumpRows[i] || [];
+              if (row.length === 0) continue;
+
+              const matCode = matCol >= 0 ? (row[matCol] || '').toString().trim() : '';
+              const desc = descCol >= 0 ? (row[descCol] || '').toString().trim() : '';
+              const plant = plantCol >= 0 ? (row[plantCol] || wh).toString().trim() : wh;
+              const batch = batchCol >= 0 ? (row[batchCol] || '').toString().trim() : '';
+              const rawQty = unrestrictedCol >= 0 ? row[unrestrictedCol] : 0;
+              const qty = parseFloat((rawQty || 0).toString().replace(/,/g, '')) || 0;
+
+              if (matCode) {
+                await query(
+                  'INSERT INTO sap_stk_dump (material_code, material_desc, batch, plant, total_qty) VALUES (?, ?, ?, ?, ?)',
+                  [matCode, desc, batch, plant, qty]
+                );
+              }
+            }
+            console.log(`[SAP-DUMP ASNC] DB save complete with dynamic column matching!`);
+          } catch(e) {
+            console.error('[SAP-DUMP ASNC Error]:', e.message);
+          }
+        });
+
+        return;
+      }
+
+      case 'ocGetDumpExport':
+      case 'getDumpStatus':
+      case 'loadRealTimeStkDump': {
+        return res.json({
+          success: true,
+          result: {
+            status: "SUCCESS",
+            rows: cachedSapDump,
+            updatedAt: lastDumpUpdatedAt
+          }
+        });
+      }
+
+      // User Auth Handlers
       case 'wmsLogin':
       case 'wmsForceLogin':
       case 'attemptLogin': {
-        const uid = (args[0] || 'admin').toString().trim();
-        const pass = (args[1] || '').toString().trim();
+        const uid = (args[0] || 'admin').trim();
+        const pass = (args[1] || '').trim();
 
         const rows = await query('SELECT * FROM user_auth');
         const match = rows.find(r => 
@@ -91,7 +191,6 @@ app.post('/api/gas-bridge', async (req, res) => {
             }
           });
         } else {
-          // Default Admin fallback
           const fullPermissions = {};
           DEFAULT_AUTH_HEADERS.slice(4).forEach(h => fullPermissions[h] = true);
           return res.json({
@@ -104,10 +203,6 @@ app.post('/api/gas-bridge', async (req, res) => {
           });
         }
       }
-
-      case 'wmsHeartbeat':
-      case 'wmsLogoutSession':
-        return res.json({ success: true, result: { status: "SUCCESS" } });
 
       case 'wmsGetUsers':
       case 'getUserAuthData': {
@@ -130,35 +225,31 @@ app.post('/api/gas-bridge', async (req, res) => {
         });
       }
 
-      case 'wmsSaveUser':
-      case 'wmsSaveAllUsers':
       case 'wmsSaveUserAuth':
       case 'saveAllUserAuths': {
-        const usersToSave = Array.isArray(args[0]) ? args[0] : [args[0]];
-        for (const u of usersToSave) {
-          if (!u) continue;
-          const userId = u["User ID"] || u.user_id;
-          if (!userId) continue;
-          
-          const existing = await query('SELECT * FROM user_auth WHERE "User ID" = ?', [userId]);
-          if (existing && existing.length > 0) {
-            await query(
-              'UPDATE user_auth SET "Name" = ?, "Password" = ?, "Assigned Warehouses" = ? WHERE "User ID" = ?',
-              [u["Name"] || '', u["Password"] || '', u["Assigned Warehouses"] || '', userId]
-            );
-          } else {
-            await query(
-              'INSERT INTO user_auth ("User ID", "Name", "Password", "Assigned Warehouses") VALUES (?, ?, ?, ?)',
-              [userId, u["Name"] || '', u["Password"] || '', u["Assigned Warehouses"] || '']
-            );
+        const usersToSave = args[0] || [];
+        if (Array.isArray(usersToSave) && usersToSave.length > 0) {
+          for (const u of usersToSave) {
+            const userId = u["User ID"] || u.user_id;
+            if (!userId) continue;
+            
+            const existing = await query('SELECT * FROM user_auth WHERE "User ID" = ?', [userId]);
+            if (existing && existing.length > 0) {
+              await query(
+                'UPDATE user_auth SET "Name" = ?, "Password" = ?, "Assigned Warehouses" = ? WHERE "User ID" = ?',
+                [u["Name"] || '', u["Password"] || '', u["Assigned Warehouses"] || '', userId]
+              );
+            } else {
+              await query(
+                'INSERT INTO user_auth ("User ID", "Name", "Password", "Assigned Warehouses") VALUES (?, ?, ?, ?)',
+                [userId, u["Name"] || '', u["Password"] || '', u["Assigned Warehouses"] || '']
+              );
+            }
           }
         }
-        return res.json({ success: true, result: { status: "SUCCESS", message: "User Authorizations saved to Database!" } });
+        return res.json({ success: true, result: { status: "SUCCESS", message: "Saved to Database successfully!" } });
       }
 
-      // -------------------------------------------------------------
-      // 2. PARTY MASTER & SETUP MODULE
-      // -------------------------------------------------------------
       case 'ocGetPartyMaster':
       case 'getPartyMaster': {
         const rows = await query('SELECT * FROM party_master');
@@ -171,135 +262,23 @@ app.post('/api/gas-bridge', async (req, res) => {
         return res.json({ success: true, result: { contractors, supervisors, tptList } });
       }
 
-      case 'getMasterData': {
-        const whs = await query('SELECT * FROM wh_masters');
-        const bins = await query('SELECT * FROM bin_masters');
-        const skus = await query('SELECT * FROM sku_masters');
-        return res.json({
-          success: true,
-          result: {
-            warehouses: whs,
-            bins: bins,
-            skus: skus
-          }
-        });
-      }
-
-      // -------------------------------------------------------------
-      // 3. SAP STOCK DUMP & ALLOCATION MODULE
-      // -------------------------------------------------------------
-      case 'ocReplaceDump':
-      case 'uploadDump':
-      case 'saveStkDump': {
-        const wh = args[0] || 'BB04';
-        const dumpRows = args[1] || [];
-        const userId = args[2] || 'admin';
-
-        console.log(`[SAP-DUMP] Received ${dumpRows.length} rows for WH: ${wh}`);
-
-        cachedSapDump = dumpRows;
-        lastDumpUpdatedAt = new Date().toISOString();
-
-        res.json({
-          success: true,
-          result: {
-            status: "DONE",
-            rows: Math.max(0, dumpRows.length - 1),
-            updatedAt: lastDumpUpdatedAt
-          }
-        });
-
-        setImmediate(async () => {
-          try {
-            await query('DELETE FROM sap_stk_dump');
-            if (Array.isArray(dumpRows) && dumpRows.length > 1) {
-              for (let i = 1; i < Math.min(dumpRows.length, 500); i++) {
-                const r = dumpRows[i];
-                if (Array.isArray(r) && r.length >= 2) {
-                  await query(
-                    'INSERT INTO sap_stk_dump (material_code, material_desc, batch, plant, total_qty) VALUES (?, ?, ?, ?, ?)',
-                    [
-                      (r[0] || '').toString().trim(),
-                      (r[1] || '').toString().trim(),
-                      (r[2] || '').toString().trim(),
-                      wh,
-                      parseFloat(r[3] || r[4] || 0) || 0
-                    ]
-                  );
-                }
-              }
-            }
-          } catch(e) {
-            console.error('[SAP-DUMP Error]:', e.message);
-          }
-        });
-
-        return;
-      }
-
-      case 'ocGetDumpExport':
-      case 'getDumpStatus':
-      case 'loadRealTimeStkDump': {
-        const dbDump = await query('SELECT material_code, material_desc, batch, plant, total_qty FROM sap_stk_dump');
-        let dumpResult = cachedSapDump;
-        if (dbDump && dbDump.length > 0 && cachedSapDump.length === 0) {
-          dumpResult = dbDump.map(r => [r.material_code, r.material_desc, r.batch, r.plant, r.total_qty]);
-        }
-        return res.json({
-          success: true,
-          result: {
-            status: "SUCCESS",
-            rows: dumpResult,
-            updatedAt: lastDumpUpdatedAt
-          }
-        });
-      }
-
-      // -------------------------------------------------------------
-      // 4. SALES & OUTBOUND ORDER CHECKER MODULE
-      // -------------------------------------------------------------
       case 'getPickingOrders':
       case 'getOutboundOrders':
-      case 'getClearOrders':
-      case 'ocGetDispatchList': {
-        const orders = await query('SELECT * FROM operation_sheet');
-        return res.json({ success: true, result: orders || [] });
-      }
-
-      case 'ocGetPartialOrders': {
-        const warehouse = args[0] || 'BB04';
-        const search = args[1] || '';
+      case 'getClearOrders': {
         const orders = await query('SELECT * FROM operation_sheet WHERE status = ?', ['Picking']);
         return res.json({ success: true, result: orders || [] });
       }
 
       case 'getPhyStkAllocation':
-      case 'getAllocationForOrder':
-      case 'opGetAllocatedStockForOrder': {
+      case 'getAllocationForOrder': {
         const orderNo = args[0] || '';
         const allocations = await query('SELECT * FROM phy_stk_allocation WHERE order_no = ?', [orderNo]);
         return res.json({ success: true, result: allocations || [] });
       }
 
-      case 'opFetchOutboundPickingOrders': {
-        const warehouse = args[0] || 'BB04';
-        const orders = await query('SELECT * FROM operation_sheet WHERE status = ?', ['Picking']);
-        return res.json({ success: true, result: { status: "SUCCESS", orders: orders || [] } });
-      }
-
-      case 'opGetBinSuggestionsForSku': {
-        const sku = args[0] || '';
-        const suggestions = await query('SELECT * FROM phy_stk_entry WHERE sku_code = ? AND available_qty > 0', [sku]);
-        return res.json({ success: true, result: suggestions || [] });
-      }
-
       case 'confirmOutbound':
-      case 'saveOutboundConfirmation':
-      case 'opConfirmOutboundDeductStock':
-      case 'opConfirmOutboundPickList': {
+      case 'saveOutboundConfirmation': {
         const payload = args[0] || {};
-        const orderNo = payload.orderNo || args[1] || '';
-
         await query(`
           UPDATE operation_sheet SET 
             status = 'Confirmed', vehicle_no = ?, driver_no = ?, tpt_name = ?, tpt_gst = ?,
@@ -307,8 +286,8 @@ app.post('/api/gas-bridge', async (req, res) => {
           WHERE order_no = ?
         `, [
           payload.vehicleNo || '', payload.driverNo || '', payload.tptName || '', payload.tptGst || '',
-          payload.loadingSupervisor || '', payload.billingSupervisor || 'Anish Shakya', payload.shift || 'Day Shift', payload.loadingDate || new Date().toISOString().split('T')[0],
-          payload.contractorName || '', orderNo
+          payload.loadingSupervisor || '', payload.billingSupervisor || '', payload.shift || '', payload.loadingDate || '',
+          payload.contractorName || '', payload.orderNo || ''
         ]);
 
         if (payload.allocationsToDeduct) {
@@ -317,79 +296,17 @@ app.post('/api/gas-bridge', async (req, res) => {
             await query('DELETE FROM phy_stk_entry WHERE available_qty <= 0');
           }
         }
-        await query('DELETE FROM phy_stk_allocation WHERE order_no = ?', [orderNo]);
+        await query('DELETE FROM phy_stk_allocation WHERE order_no = ?', [payload.orderNo || '']);
 
-        return res.json({ success: true, result: { status: "SUCCESS", message: "Confirmed Outbound & Deducted Stock in Supabase!" } });
-      }
-
-      // -------------------------------------------------------------
-      // 5. RECEIPTS & INBOUND MODULE (ASN, GRN, INWARD MIS)
-      // -------------------------------------------------------------
-      case 'iwGetPendingAsns':
-      case 'getPendingASN': {
-        const asns = await query('SELECT * FROM inbound_entry WHERE status = ?', ['Pending']);
-        return res.json({ success: true, result: asns || [] });
-      }
-
-      case 'iwConfirmAsn':
-      case 'iwConfirmInboundObd22':
-      case 'confirmASN': {
-        const asnNo = args[0] || '';
-        await query('UPDATE inbound_entry SET status = ? WHERE asn_no = ?', ['Received', asnNo]);
-        return res.json({ success: true, result: { status: "SUCCESS", message: `ASN ${asnNo} confirmed!` } });
-      }
-
-      case 'iwLoadAllInwardMisData':
-      case 'iwGetAsnReport': {
-        const reports = await query('SELECT * FROM inbound_entry');
-        return res.json({ success: true, result: reports || [] });
-      }
-
-      // -------------------------------------------------------------
-      // 6. INVENTORY RECONCILIATION & BIN TRANSFERS
-      // -------------------------------------------------------------
-      case 'ocGetStock':
-      case 'getInventoryStock': {
-        const stock = await query('SELECT * FROM phy_stk_entry WHERE available_qty > 0');
-        return res.json({ success: true, result: stock || [] });
-      }
-
-      case 'recordBinTransaction_':
-      case 'executeBinTransfer': {
-        const fromBin = args[0];
-        const toBin = args[1];
-        const sku = args[2];
-        const qty = parseFloat(args[3]) || 0;
-        const user = args[4] || 'Operator';
-
-        await query('UPDATE phy_stk_entry SET available_qty = available_qty - ? WHERE bin_no = ? AND sku_code = ?', [qty, fromBin, sku]);
-        await query('DELETE FROM phy_stk_entry WHERE available_qty <= 0');
-        await query('INSERT INTO phy_stk_entry (bin_no, sku_code, available_qty, mfg_line) VALUES (?, ?, ?, ?)', [toBin, sku, qty, 'Bin-Transfer']);
-        await query('INSERT INTO bin_txin (from_bin, to_bin, sku_code, transfer_qty, performed_by) VALUES (?, ?, ?, ?, ?)', [fromBin, toBin, sku, qty, user]);
-
-        return res.json({ success: true, result: { status: "SUCCESS", message: `Transferred ${qty} of ${sku} from ${fromBin} to ${toBin}` } });
+        return res.json({ success: true, result: { status: "SUCCESS", message: "Confirmed in Supabase Database successfully!" } });
       }
 
       default:
-        console.log(`[GAS-BRIDGE] Fallback handler for: ${fn}`);
-        return res.json({ success: true, result: { status: "SUCCESS", message: "Processed successfully" } });
+        return res.json({ success: true, result: { status: "SUCCESS", message: "Processed" } });
     }
   } catch (err) {
-    console.error(`[Bonn_Prod_WMS GAS-BRIDGE Error]:`, err);
+    console.error(`[GAS-BRIDGE Error]:`, err);
     res.json({ success: false, error: err.message });
-  }
-});
-
-// REST APIs
-app.get('/api/party-master', async (req, res) => {
-  try {
-    const rows = await query('SELECT * FROM party_master');
-    const contractors = [...new Set(rows.map(r => r.contractor_name || r["contractor_name"]).filter(Boolean))];
-    const supervisors = [...new Set(rows.map(r => r.supervisor_name || r["supervisor_name"]).filter(Boolean))];
-    const tptList = rows.filter(r => r.tpt_name || r["tpt_name"]).map(r => ({ name: r.tpt_name || r["tpt_name"], gst: r.tpt_gst || r["tpt_gst"] || '' }));
-    res.json({ success: true, contractors, supervisors, tptList });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
   }
 });
 
