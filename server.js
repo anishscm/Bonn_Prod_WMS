@@ -867,6 +867,8 @@ app.post('/api/gas-bridge', async (req, res) => {
             message: isAllClear ? "All items clear before transit!" : "Order has shortages before transit."
           }
         });
+      }
+
       case 'ocGetShortageReport': {
         const warehouse = args[0] || 'BB04';
         const rows = await query("SELECT * FROM shortage_partial WHERE UPPER(warehouse) = UPPER(?) OR UPPER(warehouse) = 'ALL'", [warehouse]);
