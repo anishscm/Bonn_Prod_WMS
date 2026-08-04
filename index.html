@@ -1344,7 +1344,7 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
     </div>
     
     <!-- Tagline directly under Bonn logo -->
-    <div class="login-tagline" style="margin-bottom: 8px;">Everyday, Everywhere...</div>
+    <div class="login-tagline" style="margin-bottom: 6px; text-align:center;">Everyday, Everywhere...</div>
     
     <!-- 2. WMS Logo -->
     <div style="text-align:center; margin-bottom: 2px;">
@@ -1358,16 +1358,19 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
     </div>
     
     <!-- Watermark directly under WMS logo -->
-    <div class="login-watermark" style="margin-bottom: 16px;">Developed by Anish Shakya.</div>
+    <div class="login-watermark" style="margin-bottom: 14px; text-align:center;">Developed by Anish Shakya.</div>
     
-    <label for="loginUid" style="cursor:pointer;user-select:none;">User ID</label>
-    <input type="text" id="loginUid" placeholder="Enter User ID" autocomplete="username" autofocus style="position:relative;z-index:2002;pointer-events:auto!important;cursor:text!important;" onkeydown="if(event.key==='Enter')document.getElementById('loginPass').focus()">
-    
-    <label for="loginPass" style="cursor:pointer;user-select:none;">Password</label>
-    <input type="password" id="loginPass" placeholder="Enter Password" autocomplete="current-password" style="position:relative;z-index:2002;pointer-events:auto!important;cursor:text!important;" onkeydown="if(event.key==='Enter')attemptLogin()">
+    <div style="display:flex; flex-direction:column; gap:4px; margin-top:6px;">
+      <label for="loginUid" style="cursor:pointer; user-select:none; font-weight:600; font-size:12.5px; color:rgba(255,255,255,0.9);">User ID</label>
+      <input type="text" id="loginUid" placeholder="Enter User ID" autocomplete="username" autofocus style="position:relative; z-index:2002; pointer-events:auto!important; cursor:text!important; width:100%; padding:10px 14px; border-radius:8px;" onkeydown="if(event.key==='Enter')document.getElementById('loginPass').focus()">
+    </div>
 
-    
-    <button class="login-btn" id="loginBtn" onclick="attemptLogin()">Login</button>
+    <div style="display:flex; flex-direction:column; gap:4px; margin-top:12px;">
+      <label for="loginPass" style="cursor:pointer; user-select:none; font-weight:600; font-size:12.5px; color:rgba(255,255,255,0.9);">Password</label>
+      <input type="password" id="loginPass" placeholder="Enter Password" autocomplete="current-password" style="position:relative; z-index:2002; pointer-events:auto!important; cursor:text!important; width:100%; padding:10px 14px; border-radius:8px;" onkeydown="if(event.key==='Enter')attemptLogin()">
+    </div>
+
+    <button class="login-btn" id="loginBtn" onclick="attemptLogin()" style="margin-top:20px; position:relative; z-index:2002; pointer-events:auto!important;">Login</button>
     <div id="loginMsg" class="login-msg"></div>
     <button id="forceLoginBtn" onclick="attemptForceLogin()" style="display:none;margin-top:8px;width:100%;padding:10px;border:none;border-radius:8px;background:#e65c00;color:#fff;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:0.3px;">&#x26A1; Force Login (Override Other Session)</button>
   </div>
