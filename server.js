@@ -1114,6 +1114,14 @@ app.post('/api/gas-bridge', async (req, res) => {
           s.sku, s.desc, s.totalReq, s.shortBT, s.shortAT
         ]);
 
+        function getAllocPriority(rem) {
+          const r = (rem || '').toString().toUpperCase();
+          if (r.includes('INHAND')) return 1;
+          if (r.includes('TRANSIT')) return 2;
+          if (r.includes('PARTIAL')) return 3;
+          return 4;
+        }
+
         const checkerRows = await query('SELECT * FROM order_checker');
         const orderSummaryHeaders = [
           "Sale Document", "Document date", "Sold to Party", "Sold-To Party Name", "Customer reference",
@@ -1123,6 +1131,13 @@ app.post('/api/gas-bridge', async (req, res) => {
           r.order_no || '', r.doc_date || '', r.sold_to_party || '', r.customer_name || '', r.cust_ref || '',
           r.plant || warehouse, Number(r.total_order_qty) || 0, Number(r.shortage_qty) || 0, r.alloc_remark || '', r.shortage_remark || ''
         ]);
+
+        orderSummaryRows.sort((a, b) => {
+          const pA = getAllocPriority(a[8]);
+          const pB = getAllocPriority(b[8]);
+          if (pA !== pB) return pA - pB;
+          return String(a[0] || '').localeCompare(String(b[0] || ''));
+        });
 
         return res.json({
           success: true,
@@ -1567,7 +1582,7 @@ app.post('/api/gas-bridge', async (req, res) => {
 
               if (lineFromTrn > 0) {
                 totalTransitQty += lineFromTrn;
-                transitRemarks.push(`${sku}(${lineFromTrn})`);
+                transitRemarks.push(`${sku}(${lineFromTrn})(Transit)`);
                 const statusBT = lineFromInh === 0 ? "NO STOCK" : "SHORT";
                 shortageBatch.push([warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, lineFromInh, lineFromTrn, statusBT, lineFromTrn, 0, 'OK', tsStr, userId]);
               }
@@ -1637,13 +1652,20 @@ app.post('/api/gas-bridge', async (req, res) => {
               allocBatch.push([warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, inhAlloc, trnUsed, userId]);
             }
 
-            if (trnUsed > 0) totalTransitQty += trnUsed;
+            if (trnUsed > 0) {
+              totalTransitQty += trnUsed;
+              shortRemarks.push(`${sku}(${trnUsed})(Transit)`);
+            }
 
-            if (shortAT > 0 || shortBT > 0) {
-              const sQty = shortAT > 0 ? shortAT : shortBT;
-              shortRemarks.push(`${sku}(${sQty})`);
+            if (shortAT > 0) {
               totalShortQty += shortAT;
               shortLines.push({ sku: sku, reqQty: reqQty, shortAT: shortAT });
+              shortRemarks.push(`${sku}(${shortAT})`);
+            } else if (trnUsed === 0 && shortBT > 0) {
+              shortRemarks.push(`${sku}(${shortBT})`);
+            }
+
+            if (shortAT > 0 || shortBT > 0) {
               shortageBatch.push([warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, inhAlloc, shortBT, statusBT, trnUsed, shortAT, statusAT, tsStr, userId]);
             }
           }
