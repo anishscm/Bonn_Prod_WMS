@@ -253,6 +253,7 @@ app.post('/api/gas-bridge', async (req, res) => {
         const uid = (args[0] || 'admin').trim();
         const pass = (args[1] || '').trim();
         const deviceId = (args[2] || 'browser_' + Date.now()).trim();
+        const isForce = args[3] === true || args[3] === 'true' || args[3] === 1;
 
         const rows = await query('SELECT * FROM user_auth');
         const match = rows.find(r => 
@@ -270,12 +271,12 @@ app.post('/api/gas-bridge', async (req, res) => {
           const activeSession = await query('SELECT * FROM sessions WHERE user_id = ?', [userIdKey]);
           const newSessionToken = "sess_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
 
-          if (activeSession && activeSession.length > 0) {
+          if (!isForce && activeSession && activeSession.length > 0) {
             const sess = activeSession[0];
             // If already logged in on a different device within last 12 hours
             const lastLoginTime = new Date(sess.last_login).getTime();
             const twelveHours = 12 * 60 * 60 * 1000;
-            if (sess.device_id && sess.device_id !== deviceId && (Date.now() - lastLoginTime) < twelveHours) {
+            if (sess.device_id && sess.device_id !== deviceId && sess.session_token !== deviceId && (Date.now() - lastLoginTime) < twelveHours) {
               return res.json({
                 success: true,
                 result: {
