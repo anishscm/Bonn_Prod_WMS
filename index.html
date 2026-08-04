@@ -1075,18 +1075,18 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
       <g stroke="var(--p)" stroke-width="4" opacity="var(--bg-svg-glow-opacity)">
         <path d="M-100,50 L200,200 L500,50 L800,200 L1100,50 L1400,200 L1550,100"/>
         <path d="M-100,70 L200,220 L500,70 L800,220 L1100,70 L1400,220 L1550,120"/>
-        <path d="M-100,90 L200,240 L500,90 L800,240 L1100,90 L1400,240 L1550,140"/>
-        <path d="M-100,800 Q200,700 500,800 T1100,800 T1550,750"/>
-        <path d="M-100,820 Q200,720 500,820 T1100,820 T1550,770"/>
-        <path d="M-100,840 Q200,740 500,840 T1100,840 T1550,790"/>
-      </g>
-      <g stroke="var(--p)" stroke-width="1.2" opacity="var(--bg-svg-opacity)">
-        <path d="M-100,50 L200,200 L500,50 L800,200 L1100,50 L1400,200 L1550,100"/>
-        <path d="M-100,70 L200,220 L500,70 L800,220 L1100,70 L1400,220 L1550,120"/>
-        <path d="M-100,90 L200,240 L500,90 L800,240 L1100,90 L1400,240 L1550,140"/>
-        <path d="M-100,800 Q200,700 500,800 T1100,800 T1550,750"/>
-        <path d="M-100,820 Q200,720 500,820 T1100,820 T1550,770"/>
-        <path d="M-100,840 Q200,740 500,840 T1100,840 T1550,790"/>
+.excel-cell-input:focus {
+  background: color-mix(in srgb, var(--p) 10%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--p);
+  border-radius: 4px;
+}
+.cell-edited {
+  background: color-mix(in srgb, #eab308 10%, transparent) !important;
+  color: #eab308 !important;
+  font-weight: 600;
+}
+.row-selected {
+  background: color-mix(in srgb, var(--p) 12%, var(--card-bg)) !important;
 }
 .row-selected td, .row-selected input {
   background: color-mix(in srgb, var(--p) 12%, var(--card-bg)) !important;
@@ -1286,6 +1286,7 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
     </g>
   </svg>
 </div>
+
 
 <!-- LOGIN OVERLAY -->
 <div class="login-overlay" id="loginOverlay">
