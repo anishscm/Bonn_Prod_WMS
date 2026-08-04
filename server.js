@@ -867,6 +867,252 @@ app.post('/api/gas-bridge', async (req, res) => {
             message: isAllClear ? "All items clear before transit!" : "Order has shortages before transit."
           }
         });
+      case 'ocGetShortageReport': {
+        const warehouse = args[0] || 'BB04';
+        const rows = await query("SELECT * FROM shortage_partial WHERE UPPER(warehouse) = UPPER(?) OR UPPER(warehouse) = 'ALL'", [warehouse]);
+        const outwardRows = await query('SELECT * FROM operation_sheet');
+        const outwardMap = {};
+        for (const r of outwardRows) {
+          const soNum = _norm(r.order_no);
+          if (soNum) {
+            outwardMap[soNum] = {
+              allocationRemark: r.alloc_remark || '',
+              vehNumber: r.vehicle_no || '',
+              driverContact: r.driver_no || ''
+            };
+          }
+        }
+
+        const soMap = {};
+        for (const r of rows) {
+          const soNum = _norm(r.so_no);
+          if (!soNum) continue;
+          const sku = _norm(r.sku_code);
+          const reqQty = Number(r.req_qty) || 0;
+          const availInhand = Number(r.avail_inhand) || 0;
+          const shortBT = Number(r.short_bt) || 0;
+          const statusBT = r.status_bt || 'SHORT';
+          const trnUsed = Number(r.transit_used) || 0;
+          const shortAT = Number(r.short_at) || 0;
+          const statusAT = r.status_at || 'OK';
+
+          const outwardInfo = outwardMap[soNum] || { allocationRemark: '', vehNumber: '', driverContact: '' };
+
+          if (!soMap[soNum]) {
+            soMap[soNum] = {
+              soNumber: soNum,
+              soDate: r.so_date || '',
+              soTime: '',
+              party: r.party_name || '',
+              dest: '',
+              vehNumber: outwardInfo.vehNumber,
+              driverContact: outwardInfo.driverContact,
+              allocationRemark: outwardInfo.allocationRemark,
+              lines: []
+            };
+          }
+
+          soMap[soNum].lines.push({
+            sku: sku,
+            desc: r.description || '',
+            reqQty: reqQty,
+            availInhand: availInhand,
+            shortBT: shortBT,
+            statusBT: statusBT,
+            trnUsed: trnUsed,
+            shortAT: shortAT,
+            statusAT: statusAT
+          });
+        }
+
+        const skuMap = {};
+        Object.values(soMap).forEach(so => {
+          so.lines.forEach(l => {
+            if (!skuMap[l.sku]) {
+              skuMap[l.sku] = { sku: l.sku, desc: l.desc, totalShortBT: 0, totalShortAT: 0, affectedSOs: [] };
+            }
+            skuMap[l.sku].totalShortBT += l.shortBT;
+            skuMap[l.sku].totalShortAT += l.shortAT;
+            skuMap[l.sku].affectedSOs.push(so.soNumber);
+          });
+        });
+
+        const sortedOrders = Object.values(soMap).sort((a, b) => a.soNumber.localeCompare(b.soNumber));
+        const sortedSummary = Object.values(skuMap).sort((a, b) => b.totalShortAT - a.totalShortAT);
+
+        return res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            orders: sortedOrders,
+            summary: sortedSummary
+          }
+        });
+      }
+
+      case 'ocGetWOAlocShortageReport': {
+        const warehouse = args[0] || 'BB04';
+        const dumpRows = await query("SELECT * FROM sap_stk_dump WHERE UPPER(warehouse) = UPPER(?) OR UPPER(warehouse) = 'ALL'", [warehouse]);
+        const dumpMap = {};
+        dumpRows.forEach(r => {
+          const sku = _norm(r.material_code);
+          if (!sku) return;
+          if (!dumpMap[sku]) dumpMap[sku] = { unrestricted: 0, transit: 0 };
+          dumpMap[sku].unrestricted += Number(r.total_unrestricted) || 0;
+          dumpMap[sku].transit += Number(r.total_transit) || 0;
+        });
+
+        const opRows = await query('SELECT * FROM operation_sheet WHERE UPPER(alloc_remark) LIKE \'%WITHOUT ALLOCATION%\'');
+        const todayStr = new Date().toISOString().split('T')[0];
+        const skuMap = {};
+        const orderReport = [];
+
+        opRows.forEach(order => {
+          const soNum = _norm(order.order_no);
+          const soDate = order.order_date || '';
+          const party = order.customer_name || '';
+          const isToday = soDate === todayStr;
+
+          let lines = [];
+          try { lines = JSON.parse(order.sku_code); } catch(e) {}
+
+          lines.forEach(l => {
+            const sku = _norm(l.sku || l.material);
+            if (!sku) return;
+            const desc = l.desc || l.description || '';
+            const reqQty = Number(l.qty || l.reqQty || l.orderedQty) || 0;
+
+            if (!skuMap[sku]) {
+              skuMap[sku] = { sku: sku, desc: desc, pendingOrderQty: 0, todaysOrderQty: 0, totalReq: 0 };
+            }
+
+            if (isToday) skuMap[sku].todaysOrderQty += reqQty;
+            else skuMap[sku].pendingOrderQty += reqQty;
+            skuMap[sku].totalReq += reqQty;
+
+            orderReport.push({
+              soNum: soNum,
+              soDate: soDate,
+              party: party,
+              sku: sku,
+              desc: desc,
+              reqQty: reqQty,
+              remark: "Ok"
+            });
+          });
+        });
+
+        const skuReport = [];
+        const skuRemarks = {};
+
+        Object.keys(skuMap).forEach(sku => {
+          const s = skuMap[sku];
+          const stock = dumpMap[sku] || { unrestricted: 0, transit: 0 };
+          const stockDiff = stock.unrestricted - s.totalReq;
+          const diffAfterIntransit = stockDiff + stock.transit;
+
+          let remark = "Ok";
+          if (s.totalReq > 0 && diffAfterIntransit < 0) {
+            remark = "Short Quantity-" + Math.abs(diffAfterIntransit);
+          }
+          skuRemarks[sku] = remark;
+
+          skuReport.push({
+            material: sku,
+            description: s.desc,
+            pendingOrder: s.pendingOrderQty,
+            todaysOrder: s.todaysOrderQty,
+            total: s.totalReq,
+            unrestricted: stock.unrestricted,
+            stockDiff: stockDiff,
+            inTransit: stock.transit,
+            diffAfterIntransit: diffAfterIntransit,
+            remark: remark
+          });
+        });
+
+        orderReport.forEach(o => { o.remark = skuRemarks[o.sku] || "Ok"; });
+
+        skuReport.sort((a, b) => {
+          const sA = a.remark.includes("Short") ? 1 : 0;
+          const sB = b.remark.includes("Short") ? 1 : 0;
+          if (sA !== sB) return sB - sA;
+          return a.material.localeCompare(b.material);
+        });
+
+        const checkerRows = await query('SELECT * FROM order_checker');
+        const orderSummaryHeaders = [
+          "Sale Document", "Document date", "Sold to Party", "Sold-To Party Name", "Customer reference",
+          "Plant", "Total Order Qty", "Shortage Qty", "Allocation Remark", "Shortage Remark"
+        ];
+        const orderSummaryRows = checkerRows.map(r => [
+          r.order_no || '', r.doc_date || '', r.sold_to_party || '', r.customer_name || '', r.cust_ref || '',
+          r.plant || warehouse, Number(r.total_order_qty) || 0, Number(r.shortage_qty) || 0, r.alloc_remark || '', r.shortage_remark || ''
+        ]);
+
+        return res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            orderSummary: { headers: orderSummaryHeaders, rows: orderSummaryRows },
+            skuReport: skuReport,
+            orderReport: orderReport
+          }
+        });
+      }
+
+      case 'ocGetCombinedShortageExport': {
+        const warehouse = args[0] || 'BB04';
+
+        const shortageRows = await query("SELECT * FROM shortage_partial WHERE UPPER(warehouse) = UPPER(?) OR UPPER(warehouse) = 'ALL'", [warehouse]);
+        const orderWiseHeaders = [
+          "Warehouse", "SO Number", "Party name, Dest city Name", "SO Date", 
+          "SKU", "Description", "Req Qty", "Avail Inhand", "Short BT", 
+          "Status BT", "Transit Used", "Short AT", "Status AT", "Submit Time", "Updated By"
+        ];
+        const orderWiseRows = shortageRows.map(r => [
+          r.warehouse || warehouse, r.so_no || '', r.party_name || '', r.so_date || '',
+          r.sku_code || '', r.description || '', Number(r.req_qty) || 0, Number(r.avail_inhand) || 0,
+          Number(r.short_bt) || 0, r.status_bt || 'SHORT', Number(r.transit_used) || 0,
+          Number(r.short_at) || 0, r.status_at || 'OK', r.submit_time || '', r.updated_by || 'admin'
+        ]);
+
+        const skuSummaryMap = {};
+        shortageRows.forEach(r => {
+          const sku = _norm(r.sku_code);
+          if (!sku) return;
+          if (!skuSummaryMap[sku]) {
+            skuSummaryMap[sku] = { sku: sku, desc: r.description || '', totalReq: 0, shortBT: 0, shortAT: 0 };
+          }
+          skuSummaryMap[sku].totalReq += Number(r.req_qty) || 0;
+          skuSummaryMap[sku].shortBT += Number(r.short_bt) || 0;
+          skuSummaryMap[sku].shortAT += Number(r.short_at) || 0;
+        });
+
+        const skuSummaryHeaders = ["SKU Code", "Description", "Total Req Qty", "Short Before Transit (BT)", "Short After Transit (AT)"];
+        const skuSummaryRows = Object.values(skuSummaryMap).map(s => [
+          s.sku, s.desc, s.totalReq, s.shortBT, s.shortAT
+        ]);
+
+        const checkerRows = await query('SELECT * FROM order_checker');
+        const orderSummaryHeaders = [
+          "Sale Document", "Document date", "Sold to Party", "Sold-To Party Name", "Customer reference",
+          "Plant", "Total Order Qty", "Shortage Qty", "Allocation Remark", "Shortage Remark"
+        ];
+        const orderSummaryRows = checkerRows.map(r => [
+          r.order_no || '', r.doc_date || '', r.sold_to_party || '', r.customer_name || '', r.cust_ref || '',
+          r.plant || warehouse, Number(r.total_order_qty) || 0, Number(r.shortage_qty) || 0, r.alloc_remark || '', r.shortage_remark || ''
+        ]);
+
+        return res.json({
+          success: true,
+          result: {
+            status: "DONE",
+            orderWise: { headers: orderWiseHeaders, rows: orderWiseRows },
+            skuSummary: { headers: skuSummaryHeaders, rows: skuSummaryRows },
+            orderSummary: { headers: orderSummaryHeaders, rows: orderSummaryRows }
+          }
+        });
       }
 
       case 'opAllocateOBDBatches': {
