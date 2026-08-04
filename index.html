@@ -25,6 +25,14 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ fn: prop, args: args })
             });
+
+            if (!response.ok) {
+              const errText = await response.text().catch(() => '');
+              console.error(`[Server HTTP Error ${response.status}]:`, errText);
+              if (failureCb) failureCb(`Server connection error (${response.status})`);
+              return;
+            }
+
             const data = await response.json();
             if (data.success) {
               if (successCb) successCb(data.result);
@@ -34,8 +42,9 @@
             }
           } catch(e) {
             console.error('Network error on GAS Bridge:', e);
-            if (failureCb) failureCb(e.message);
+            if (failureCb) failureCb(e.message || 'Network communication error');
           }
+
         };
       }
     });

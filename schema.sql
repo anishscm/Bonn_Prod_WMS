@@ -1,28 +1,8 @@
--- Clean Drop & Fresh Creation Schema for Supabase PostgreSQL & SQLite
--- Ensures all columns (including plant, dist_channel, etc.) are created cleanly without column missing errors
-
-DROP TABLE IF EXISTS user_auth CASCADE;
-DROP TABLE IF EXISTS party_master CASCADE;
-DROP TABLE IF EXISTS wh_masters CASCADE;
-DROP TABLE IF EXISTS bin_masters CASCADE;
-DROP TABLE IF EXISTS sku_masters CASCADE;
-DROP TABLE IF EXISTS mail_masters CASCADE;
-DROP TABLE IF EXISTS sap_stk_dump CASCADE;
-DROP TABLE IF EXISTS sap_stk_allocation CASCADE;
-DROP TABLE IF EXISTS partial_clear_orders CASCADE;
-DROP TABLE IF EXISTS shortage_partial CASCADE;
-DROP TABLE IF EXISTS clear_order CASCADE;
-DROP TABLE IF EXISTS order_checker CASCADE;
-DROP TABLE IF EXISTS operation_sheet CASCADE;
-DROP TABLE IF EXISTS phy_stk_allocation CASCADE;
-DROP TABLE IF EXISTS phy_stk_entry CASCADE;
-DROP TABLE IF EXISTS bin_txin CASCADE;
-DROP TABLE IF EXISTS outward_mis CASCADE;
-DROP TABLE IF EXISTS inward_mis CASCADE;
-DROP TABLE IF EXISTS asn CASCADE;
+-- Safe Persistent Schema for Supabase PostgreSQL & SQLite
+-- Preserves existing production records while ensuring tables exist
 
 -- 1. USER_AUTH
-CREATE TABLE user_auth (
+CREATE TABLE IF NOT EXISTS user_auth (
     "User ID" TEXT PRIMARY KEY,
     "Name" TEXT,
     "Password" TEXT,
@@ -34,9 +14,13 @@ CREATE TABLE user_auth (
     "Inventory_Reconciliation" TEXT DEFAULT 'NO', "Inventory_Enquiry" TEXT DEFAULT 'NO', "Inventory_Reports" TEXT DEFAULT 'NO'
 );
 
+-- Seed Default Admin User if User Auth is empty
+INSERT INTO user_auth ("User ID", "Name", "Password", "Assigned Warehouses", "Admin_UserAuth", "Admin_ActivityLog", "Admin_ResetData", "Setup_BinMaster", "Setup_ProductMaster", "Sales_StkDump", "Sales_OrderChecker", "Sales_ShortageChecker", "Sales_AllocationView", "Sales_ConfirmOutbound", "Receipts_ASN", "Receipts_CreateInbound", "Receipts_ConfirmInbound", "Receipts_InboundReport", "Inventory_Reconciliation", "Inventory_Enquiry", "Inventory_Reports")
+VALUES ('admin', 'Anish Shakya', 'admin123', '*', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES', 'YES')
+ON CONFLICT ("User ID") DO NOTHING;
+
 -- 1b. SESSIONS (Single Device Login Enforcement)
-DROP TABLE IF EXISTS sessions CASCADE;
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     user_id TEXT PRIMARY KEY,
     session_token TEXT,
     last_login TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -44,8 +28,9 @@ CREATE TABLE sessions (
 );
 
 
+
 -- 2. PARTY_MASTER
-CREATE TABLE party_master (
+CREATE TABLE IF NOT EXISTS party_master (
     id SERIAL PRIMARY KEY,
     contractor_name TEXT,
     supervisor_name TEXT,
@@ -55,7 +40,7 @@ CREATE TABLE party_master (
 );
 
 -- 3. WH_MASTERS
-CREATE TABLE wh_masters (
+CREATE TABLE IF NOT EXISTS wh_masters (
     wh_code TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     plant TEXT,
@@ -65,7 +50,7 @@ CREATE TABLE wh_masters (
 );
 
 -- 4. BIN_MASTERS
-CREATE TABLE bin_masters (
+CREATE TABLE IF NOT EXISTS bin_masters (
     bin_code TEXT PRIMARY KEY,
     wh_code TEXT,
     zone TEXT,
@@ -75,7 +60,7 @@ CREATE TABLE bin_masters (
 );
 
 -- 5. SKU_MASTERS
-CREATE TABLE sku_masters (
+CREATE TABLE IF NOT EXISTS sku_masters (
     sku_code TEXT PRIMARY KEY,
     sku_name TEXT NOT NULL,
     description TEXT,
@@ -87,7 +72,7 @@ CREATE TABLE sku_masters (
 );
 
 -- 6. MAIL_MASTERS
-CREATE TABLE mail_masters (
+CREATE TABLE IF NOT EXISTS mail_masters (
     id SERIAL PRIMARY KEY,
     module TEXT,
     email TEXT,
@@ -97,7 +82,7 @@ CREATE TABLE mail_masters (
 );
 
 -- 7. SAP_STK_DUMP
-CREATE TABLE sap_stk_dump (
+CREATE TABLE IF NOT EXISTS sap_stk_dump (
     id SERIAL PRIMARY KEY,
     warehouse TEXT,
     sloc TEXT,
@@ -110,7 +95,7 @@ CREATE TABLE sap_stk_dump (
 );
 
 -- 8. SAP_STK_ALLOCATION
-CREATE TABLE sap_stk_allocation (
+CREATE TABLE IF NOT EXISTS sap_stk_allocation (
     id SERIAL PRIMARY KEY,
     warehouse TEXT,
     timestamp TEXT,
@@ -125,7 +110,7 @@ CREATE TABLE sap_stk_allocation (
 );
 
 -- 9. PARTIAL_CLEAR_ORDERS
-CREATE TABLE partial_clear_orders (
+CREATE TABLE IF NOT EXISTS partial_clear_orders (
     id SERIAL PRIMARY KEY,
     warehouse TEXT,
     so_no TEXT,
@@ -140,7 +125,7 @@ CREATE TABLE partial_clear_orders (
 );
 
 -- 10. SHORTAGE_PARTIAL
-CREATE TABLE shortage_partial (
+CREATE TABLE IF NOT EXISTS shortage_partial (
     id SERIAL PRIMARY KEY,
     warehouse TEXT,
     so_no TEXT,
@@ -160,7 +145,7 @@ CREATE TABLE shortage_partial (
 );
 
 -- 11. CLEAR_ORDER
-CREATE TABLE clear_order (
+CREATE TABLE IF NOT EXISTS clear_order (
     id SERIAL PRIMARY KEY,
     warehouse TEXT,
     so_no TEXT,
@@ -177,7 +162,7 @@ CREATE TABLE clear_order (
 );
 
 -- 12. ORDER_CHECKER
-CREATE TABLE order_checker (
+CREATE TABLE IF NOT EXISTS order_checker (
     id SERIAL PRIMARY KEY,
     order_no TEXT,
     doc_date TEXT,
@@ -198,7 +183,7 @@ CREATE TABLE order_checker (
 );
 
 -- 13. OPERATION_SHEET
-CREATE TABLE operation_sheet (
+CREATE TABLE IF NOT EXISTS operation_sheet (
     id SERIAL PRIMARY KEY,
     plant TEXT,
     dist_channel TEXT,
@@ -230,7 +215,7 @@ CREATE TABLE operation_sheet (
 );
 
 -- 14. PHY_STK_ALLOCATION
-CREATE TABLE phy_stk_allocation (
+CREATE TABLE IF NOT EXISTS phy_stk_allocation (
     id SERIAL PRIMARY KEY,
     warehouse TEXT,
     timestamp TEXT,
@@ -243,7 +228,7 @@ CREATE TABLE phy_stk_allocation (
 );
 
 -- 15. PHY_STK_ENTRY
-CREATE TABLE phy_stk_entry (
+CREATE TABLE IF NOT EXISTS phy_stk_entry (
     id SERIAL PRIMARY KEY,
     mfg_month TEXT,
     bin_no TEXT NOT NULL,
@@ -256,7 +241,7 @@ CREATE TABLE phy_stk_entry (
 );
 
 -- 16. BIN_TXIN
-CREATE TABLE bin_txin (
+CREATE TABLE IF NOT EXISTS bin_txin (
     id SERIAL PRIMARY KEY,
     warehouse TEXT,
     timestamp TEXT,
@@ -271,7 +256,7 @@ CREATE TABLE bin_txin (
 );
 
 -- 17. OUTWARD_MIS
-CREATE TABLE outward_mis (
+CREATE TABLE IF NOT EXISTS outward_mis (
     id SERIAL PRIMARY KEY,
     plant TEXT,
     order_no TEXT,
@@ -303,7 +288,7 @@ CREATE TABLE outward_mis (
 );
 
 -- 18. INWARD_MIS
-CREATE TABLE inward_mis (
+CREATE TABLE IF NOT EXISTS inward_mis (
     id SERIAL PRIMARY KEY,
     plant_code TEXT,
     print_datetime TEXT,
@@ -336,7 +321,7 @@ CREATE TABLE inward_mis (
 );
 
 -- 19. ASN
-CREATE TABLE asn (
+CREATE TABLE IF NOT EXISTS asn (
     id SERIAL PRIMARY KEY,
     asn_datetime TEXT,
     asn_no TEXT UNIQUE NOT NULL,

@@ -14,14 +14,23 @@ if (connectionString && connectionString.includes('postgresql://')) {
   pool = new Pool({
     connectionString: connectionString,
     ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 5000
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
+    max: 20
   });
+  
+  // Prevent unhandled error exceptions when Supabase closes idle SSL sockets
+  pool.on('error', (err, client) => {
+    console.error('[DB PG Pool Error]: Unexpected error on idle client', err.message);
+  });
+  
   console.log('[DB] Configured for Supabase PostgreSQL Database');
 } else {
   const dbPath = path.join(__dirname, 'bonn_wms_database.db');
   sqliteDb = new sqlite3.Database(dbPath);
   console.log('[DB] Configured for Local SQLite Database');
 }
+
 
 // Unified Query Execution Helper with Error Handling
 function query(sql, params = []) {

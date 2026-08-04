@@ -1663,8 +1663,22 @@ app.post('/api/gas-bridge', async (req, res) => {
     }
   } catch (err) {
     console.error(`[GAS-BRIDGE Error]:`, err);
-    res.json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: err.message || "Internal Bridge Execution Error" });
   }
+});
+
+// Global Express Error Middleware
+app.use((err, req, res, next) => {
+  console.error('[Express Global Error]:', err.stack || err.message);
+  res.status(500).json({ success: false, error: err.message || 'Internal Server Error' });
+});
+
+// Process-level Crash Prevention
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception Handled]:', err.stack || err.message);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Unhandled Rejection Handled]:', reason);
 });
 
 initDb().then(() => {
@@ -1672,3 +1686,4 @@ initDb().then(() => {
     console.log(`🚀 Bonn_Prod_WMS Fast Cloud Backend connected live to Database running on port ${PORT}`);
   });
 });
+
