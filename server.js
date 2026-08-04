@@ -98,6 +98,24 @@ function _fmtDate(dt) {
   }
 }
 
+async function batchInsert(tableName, columns, rows) {
+  if (!rows || rows.length === 0) return;
+  const colNames = columns.join(', ');
+  const batchSize = 100;
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    const valuePlaceholders = [];
+    const flatParams = [];
+    chunk.forEach(row => {
+      const ph = row.map(() => '?').join(', ');
+      valuePlaceholders.push(`(${ph})`);
+      flatParams.push(...row);
+    });
+    const sql = `INSERT INTO ${tableName} (${colNames}) VALUES ${valuePlaceholders.join(', ')}`;
+    await query(sql, flatParams);
+  }
+}
+
 function fc(headerRow, keys) {
   const normHeader = headerRow.map(h => _norm(h));
   const normKeys = keys.map(k => _norm(k));
@@ -1111,6 +1129,7 @@ app.post('/api/gas-bridge', async (req, res) => {
           result: {
             status: "DONE",
             orderWise: { headers: orderWiseHeaders, rows: orderWiseRows },
+            orderWiseShortage: { headers: orderWiseHeaders, rows: orderWiseRows },
             skuSummary: { headers: skuSummaryHeaders, rows: skuSummaryRows },
             orderSummary: { headers: orderSummaryHeaders, rows: orderSummaryRows }
           }
@@ -1391,20 +1410,29 @@ app.post('/api/gas-bridge', async (req, res) => {
           return String(a.soNumber || '').localeCompare(String(b.soNumber || ''));
         });
 
-        // 6. Existing SO Cleanup
-        for (const order of validOrders) {
-          const soNum = _norm(order.soNumber || order.orderNo);
-          await query('DELETE FROM sap_stk_allocation WHERE UPPER(so_no) = UPPER(?)', [soNum]);
-          await query('DELETE FROM partial_clear_orders WHERE UPPER(so_no) = UPPER(?)', [soNum]);
-          await query('DELETE FROM shortage_partial WHERE UPPER(so_no) = UPPER(?)', [soNum]);
-          await query('DELETE FROM clear_order WHERE UPPER(so_no) = UPPER(?)', [soNum]);
-          await query('DELETE FROM operation_sheet WHERE UPPER(order_no) = UPPER(?)', [soNum]);
-          await query('DELETE FROM order_checker WHERE UPPER(order_no) = UPPER(?)', [soNum]);
+        // 6. Batch Cleanups
+        const soList = validOrders.map(o => _norm(o.soNumber || o.orderNo));
+        for (let i = 0; i < soList.length; i += 100) {
+          const chunk = soList.slice(i, i + 100);
+          const ph = chunk.map(() => '?').join(',');
+          await query(`DELETE FROM sap_stk_allocation WHERE UPPER(so_no) IN (${ph})`, chunk);
+          await query(`DELETE FROM partial_clear_orders WHERE UPPER(so_no) IN (${ph})`, chunk);
+          await query(`DELETE FROM shortage_partial WHERE UPPER(so_no) IN (${ph})`, chunk);
+          await query(`DELETE FROM clear_order WHERE UPPER(so_no) IN (${ph})`, chunk);
+          await query(`DELETE FROM operation_sheet WHERE UPPER(order_no) IN (${ph})`, chunk);
+          await query(`DELETE FROM order_checker WHERE UPPER(order_no) IN (${ph})`, chunk);
         }
 
         const processedClear = new Set();
         const processedTransitClear = new Set();
         let insertedCount = 0;
+
+        const allocBatch = [];
+        const clearBatch = [];
+        const partialBatch = [];
+        const shortageBatch = [];
+        const opSheetBatch = [];
+        const checkerBatch = [];
 
         // PASS 1: Fully Clear from In-Hand Stock Only
         for (const order of validOrders) {
@@ -1444,27 +1472,13 @@ app.post('/api/gas-bridge', async (req, res) => {
               const reqQty = Number(line.qty) || 0;
               if (!sku || reqQty <= 0) continue;
               totalOrderQty += reqQty;
-              await query(
-                'INSERT INTO sap_stk_allocation (warehouse, timestamp, so_no, so_date, party_name, reference, sku_code, inhand_alloc, transit_alloc, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, reqQty, 0, userId]
-              );
+              allocBatch.push([warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, reqQty, 0, userId]);
             }
 
             const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), desc: l.desc || '', qty: Number(l.qty) || 0 })));
-            await query(
-              'INSERT INTO clear_order (warehouse, so_no, so_date, party_name, reference, submit_time, total_lines, lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]
-            );
-
-            await query(
-              'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Picking']
-            );
-
-            await query(
-              'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Full Allocation (Inhand)']
-            );
+            clearBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]);
+            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Picking']);
+            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Full Allocation (Inhand)']);
 
             results[soNum] = { status: "DONE", isUpdate: true, clearLines: lines.length, shortLines: 0 };
             insertedCount++;
@@ -1527,36 +1541,19 @@ app.post('/api/gas-bridge', async (req, res) => {
               const lineFromTrn = reqQty - lineFromInh;
               skuInhUsed[sku] = (skuInhUsed[sku] || 0) + lineFromInh;
 
-              await query(
-                'INSERT INTO sap_stk_allocation (warehouse, timestamp, so_no, so_date, party_name, reference, sku_code, inhand_alloc, transit_alloc, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, lineFromInh, lineFromTrn, userId]
-              );
+              allocBatch.push([warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, lineFromInh, lineFromTrn, userId]);
 
               if (lineFromTrn > 0) {
                 totalTransitQty += lineFromTrn;
                 const statusBT = lineFromInh === 0 ? "NO STOCK" : "SHORT";
-                await query(
-                  'INSERT INTO shortage_partial (warehouse, so_no, party_name, so_date, sku_code, description, req_qty, avail_inhand, short_bt, status_bt, transit_used, short_at, status_at, submit_time, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                  [warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, lineFromInh, lineFromTrn, statusBT, lineFromTrn, 0, 'OK', tsStr, userId]
-                );
+                shortageBatch.push([warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, lineFromInh, lineFromTrn, statusBT, lineFromTrn, 0, 'OK', tsStr, userId]);
               }
             }
 
             const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), desc: l.desc || '', qty: Number(l.qty) || 0 })));
-            await query(
-              'INSERT INTO partial_clear_orders (warehouse, so_no, so_date, party_name, reference, submit_time, clear_lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-              [warehouse, soNum, orderDate, customerName, custRef, tsStr, linesJSON, userId]
-            );
-
-            await query(
-              'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Picking']
-            );
-
-            await query(
-              'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Full Allocation (Transit)']
-            );
+            partialBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, linesJSON, userId]);
+            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Picking']);
+            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Full Allocation (Transit)']);
 
             results[soNum] = { status: "PARTIAL", isUpdate: true, clearLines: lines.length, shortLines: 0 };
             insertedCount++;
@@ -1577,14 +1574,8 @@ app.post('/api/gas-bridge', async (req, res) => {
 
           if (isBlocked) {
             const totalOrderQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
-            await query(
-              'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Without Allocation (Block)', 'Picking']
-            );
-            await query(
-              'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Without Allocation (Block)', 'Without Allocation (Block)']
-            );
+            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Without Allocation (Block)', 'Picking']);
+            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Without Allocation (Block)', 'Without Allocation (Block)']);
             results[soNum] = { status: "DONE", isUpdate: true, clearLines: lines.length, shortLines: 0 };
             insertedCount++;
             continue;
@@ -1618,10 +1609,7 @@ app.post('/api/gas-bridge', async (req, res) => {
 
             if (inhAlloc > 0 || trnUsed > 0) {
               clearLines.push({ sku: sku, qty: inhAlloc + trnUsed, desc: line.desc || '' });
-              await query(
-                'INSERT INTO sap_stk_allocation (warehouse, timestamp, so_no, so_date, party_name, reference, sku_code, inhand_alloc, transit_alloc, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, inhAlloc, trnUsed, userId]
-              );
+              allocBatch.push([warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, inhAlloc, trnUsed, userId]);
             }
 
             if (trnUsed > 0) totalTransitQty += trnUsed;
@@ -1629,10 +1617,7 @@ app.post('/api/gas-bridge', async (req, res) => {
             if (shortAT > 0 || shortBT > 0) {
               totalShortQty += shortAT;
               shortLines.push({ sku: sku, reqQty: reqQty, shortAT: shortAT });
-              await query(
-                'INSERT INTO shortage_partial (warehouse, so_no, party_name, so_date, sku_code, description, req_qty, avail_inhand, short_bt, status_bt, transit_used, short_at, status_at, submit_time, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, inhAlloc, shortBT, statusBT, trnUsed, shortAT, statusAT, tsStr, userId]
-              );
+              shortageBatch.push([warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, inhAlloc, shortBT, statusBT, trnUsed, shortAT, statusAT, tsStr, userId]);
             }
           }
 
@@ -1641,27 +1626,14 @@ app.post('/api/gas-bridge', async (req, res) => {
           const finalShortage = isPartial ? totalShortQty : totalTransitQty;
 
           if (!isPartial) {
-            await query(
-              'INSERT INTO clear_order (warehouse, so_no, so_date, party_name, reference, submit_time, total_lines, lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-              [warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]
-            );
+            clearBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]);
           } else {
             const clearJSON = JSON.stringify(clearLines);
-            await query(
-              'INSERT INTO partial_clear_orders (warehouse, so_no, so_date, party_name, reference, submit_time, clear_lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-              [warehouse, soNum, orderDate, customerName, custRef, tsStr, clearJSON, userId]
-            );
+            partialBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, clearJSON, userId]);
           }
 
-          await query(
-            'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, finalShortage, allocRemark, 'Picking']
-          );
-
-          await query(
-            'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, finalShortage, allocRemark, allocRemark]
-          );
+          opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, finalShortage, allocRemark, 'Picking']);
+          checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, finalShortage, allocRemark, allocRemark]);
 
           results[soNum] = {
             status: isPartial ? "PARTIAL" : "DONE",
@@ -1671,6 +1643,14 @@ app.post('/api/gas-bridge', async (req, res) => {
           };
           insertedCount++;
         }
+
+        // Execute fast Batch Inserts
+        await batchInsert('sap_stk_allocation', ['warehouse', 'timestamp', 'so_no', 'so_date', 'party_name', 'reference', 'sku_code', 'inhand_alloc', 'transit_alloc', 'updated_by'], allocBatch);
+        await batchInsert('clear_order', ['warehouse', 'so_no', 'so_date', 'party_name', 'reference', 'submit_time', 'total_lines', 'lines_json', 'updated_by'], clearBatch);
+        await batchInsert('partial_clear_orders', ['warehouse', 'so_no', 'so_date', 'party_name', 'reference', 'submit_time', 'clear_lines_json', 'updated_by'], partialBatch);
+        await batchInsert('shortage_partial', ['warehouse', 'so_no', 'party_name', 'so_date', 'sku_code', 'description', 'req_qty', 'avail_inhand', 'short_bt', 'status_bt', 'transit_used', 'short_at', 'status_at', 'submit_time', 'updated_by'], shortageBatch);
+        await batchInsert('operation_sheet', ['plant', 'order_no', 'order_date', 'customer_name', 'cust_ref', 'sku_code', 'ordered_qty', 'shortage_qty', 'alloc_remark', 'status'], opSheetBatch);
+        await batchInsert('order_checker', ['order_no', 'doc_date', 'customer_name', 'cust_ref', 'lines_json', 'plant', 'total_order_qty', 'shortage_qty', 'alloc_remark', 'status'], checkerBatch);
 
         return res.json({
           success: true,
