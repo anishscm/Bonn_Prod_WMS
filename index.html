@@ -5674,8 +5674,21 @@ function parseBulkFile(file){
       var cPlant=fc(["PLANT","PLAN","WAREHOUSE","WH"]);
       var cBillingBlock=fc(["BILLING BLOCK DESCRIPTION","BILLING BLOCK","BILLING BLOCK DESC","BLOCK DESCRIPTION","BLOCK DESC"]);
       
-      if(cSO<0||cSKU<0||cQty<0)throw new Error("Missing: Sales Document, Material, Order Qty columns");
-      if(cPlant<0)throw new Error("Missing: Plant/Warehouse column");
+      var missingCols = [];
+      if(cSO<0) missingCols.push("Sales Document");
+      if(cDate<0) missingCols.push("Document Date");
+      if(cSoldTo<0) missingCols.push("Sold-to Party");
+      if(cParty<0) missingCols.push("Sold-To Party Name");
+      if(cCustRef<0) missingCols.push("Customer Reference");
+      if(cSKU<0) missingCols.push("Material");
+      if(cDesc<0) missingCols.push("Material Description");
+      if(cQty<0) missingCols.push("Order Quantity (Item)");
+      if(cPlant<0) missingCols.push("Plant");
+      if(cBillingBlock<0) missingCols.push("Billing Block Description");
+
+      if(missingCols.length > 0) {
+        throw new Error("Missing required column(s): " + missingCols.join(", "));
+      }
       
       var soMap={},soOrder=[];
       for(var i=1;i<raw.length;i++){

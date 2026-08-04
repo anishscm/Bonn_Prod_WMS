@@ -1090,13 +1090,42 @@ app.post('/api/gas-bridge', async (req, res) => {
         const warehouse = args[0] || 'BB04';
         const ordersPayload = Array.isArray(args[1]) ? args[1] : [args[1]];
         const userId = args[3] || args[2] || 'admin';
+        const tsStr = new Date().toISOString();
 
-        const existingRows = await query('SELECT order_no FROM operation_sheet');
-        const existingSet = new Set(existingRows.map(r => _norm(r.order_no)));
+        // 1. Build SAP Stock Map from sap_stk_dump
+        const dumpRows = await query('SELECT * FROM sap_stk_dump WHERE UPPER(warehouse) = UPPER(?) OR warehouse = "ALL"', [warehouse]);
+        const rawStock = {};
+        for (const r of dumpRows) {
+          const sku = _norm(r.material_code);
+          if (!sku) continue;
+          rawStock[sku] = {
+            sap: Number(r.total_unrestricted) || 0,
+            transit: Number(r.total_transit) || 0,
+            desc: r.material_desc || ''
+          };
+        }
 
+        // 2. Build Allocation Map from sap_stk_allocation
+        const allocRows = await query('SELECT * FROM sap_stk_allocation WHERE UPPER(warehouse) = UPPER(?)', [warehouse]);
+        const allocMap = { inhand: {}, transit: {} };
+        for (const r of allocRows) {
+          const sku = _norm(r.sku_code);
+          if (!sku) continue;
+          allocMap.inhand[sku] = (allocMap.inhand[sku] || 0) + (Number(r.inhand_alloc) || 0);
+          allocMap.transit[sku] = (allocMap.transit[sku] || 0) + (Number(r.transit_alloc) || 0);
+        }
+
+        // 3. Calculate Running Stock (FIFO)
+        const runInh = {};
+        const runTrn = {};
+        Object.keys(rawStock).forEach(sku => {
+          runInh[sku] = Math.max(0, rawStock[sku].sap - (allocMap.inhand[sku] || 0));
+          runTrn[sku] = Math.max(0, rawStock[sku].transit - (allocMap.transit[sku] || 0));
+        });
+
+        // 4. Validate & Pre-filter Orders
         const results = {};
-        let insertedCount = 0;
-
+        const validOrders = [];
         for (const payload of ordersPayload) {
           if (!payload) continue;
           const soNum = _norm(payload.soNumber || payload.orderNo || '');
@@ -1104,73 +1133,303 @@ app.post('/api/gas-bridge', async (req, res) => {
             results[payload.soNumber || '?'] = { status: "INVALID_SO" };
             continue;
           }
+          validOrders.push(payload);
+        }
 
-          const isUpdate = existingSet.has(soNum);
-          if (isUpdate) {
-            await query('DELETE FROM phy_stk_allocation WHERE order_no = ?', [soNum]);
+        // 5. FIFO Sort Orders by Date and Time
+        validOrders.sort((a, b) => {
+          const da = (a.soDate || a.orderDate || '') + (a.soTime || a.orderTime || '');
+          const db = (b.soDate || b.orderDate || '') + (b.soTime || b.orderTime || '');
+          if (da !== db) return da.localeCompare(db);
+          return String(a.soNumber || '').localeCompare(String(b.soNumber || ''));
+        });
+
+        // 6. Existing SO Lookup
+        const existingRows = await query('SELECT order_no FROM operation_sheet');
+        const existingSet = new Set(existingRows.map(r => _norm(r.order_no)));
+
+        // Clean up previous records if order is being re-submitted / updated
+        for (const order of validOrders) {
+          const soNum = _norm(order.soNumber || order.orderNo);
+          if (existingSet.has(soNum)) {
+            await query('DELETE FROM sap_stk_allocation WHERE so_no = ?', [soNum]);
+            await query('DELETE FROM partial_clear_orders WHERE so_no = ?', [soNum]);
             await query('DELETE FROM shortage_partial WHERE so_no = ?', [soNum]);
+            await query('DELETE FROM clear_order WHERE so_no = ?', [soNum]);
             await query('DELETE FROM operation_sheet WHERE order_no = ?', [soNum]);
+            await query('DELETE FROM order_checker WHERE order_no = ?', [soNum]);
           } else {
             existingSet.add(soNum);
           }
+        }
 
-          const customerName = payload.partyName || payload.customerName || '';
-          const custRef = payload.destCity || payload.custRef || '';
-          const orderDate = payload.soDate || payload.orderDate || new Date().toISOString().split('T')[0];
-          const lines = payload.lines || [];
+        const processedClear = new Set();
+        const processedTransitClear = new Set();
+        let insertedCount = 0;
 
-          const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), qty: Number(l.qty) || 0, desc: l.desc || '' })));
-          const totalQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+        // PASS 1: Fully Clear from In-Hand Stock Only
+        for (const order of validOrders) {
+          const soNum = _norm(order.soNumber || order.orderNo);
+          const isBlocked = !!(order.billingBlock || '').toString().trim();
+          if (isBlocked) continue;
 
-          let clearLinesCount = 0;
-          let shortLinesCount = 0;
-          let totalShortage = 0;
+          const lines = order.lines || [];
+          const orderSkuNeeds = {};
+          lines.forEach(l => {
+            const sku = _norm(l.sku);
+            const qty = Number(l.qty) || 0;
+            if (sku && qty > 0) orderSkuNeeds[sku] = (orderSkuNeeds[sku] || 0) + qty;
+          });
+
+          let canBeClear = true;
+          for (const sku of Object.keys(orderSkuNeeds)) {
+            if ((orderSkuNeeds[sku] || 0) > (runInh[sku] || 0)) {
+              canBeClear = false;
+              break;
+            }
+          }
+
+          if (canBeClear) {
+            processedClear.add(soNum);
+            Object.keys(orderSkuNeeds).forEach(sku => {
+              runInh[sku] = (runInh[sku] || 0) - orderSkuNeeds[sku];
+            });
+
+            const customerName = order.partyName || order.customerName || '';
+            const custRef = order.destCity || order.custRef || '';
+            const orderDate = order.soDate || order.orderDate || new Date().toISOString().split('T')[0];
+            let totalOrderQty = 0;
+
+            for (const line of lines) {
+              const sku = _norm(line.sku);
+              const reqQty = Number(line.qty) || 0;
+              if (!sku || reqQty <= 0) continue;
+              totalOrderQty += reqQty;
+              await query(
+                'INSERT INTO sap_stk_allocation (warehouse, timestamp, so_no, so_date, party_name, reference, sku_code, inhand_alloc, transit_alloc, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, reqQty, 0, userId]
+              );
+            }
+
+            const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), desc: l.desc || '', qty: Number(l.qty) || 0 })));
+            await query(
+              'INSERT INTO clear_order (warehouse, so_no, so_date, party_name, reference, submit_time, total_lines, lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]
+            );
+
+            await query(
+              'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Picking']
+            );
+
+            await query(
+              'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Full Allocation (Inhand)']
+            );
+
+            results[soNum] = { status: "DONE", isUpdate: true, clearLines: lines.length, shortLines: 0 };
+            insertedCount++;
+          }
+        }
+
+        // PASS 2: Fully Clear from In-Hand + Transit Stock
+        for (const order of validOrders) {
+          const soNum = _norm(order.soNumber || order.orderNo);
+          if (processedClear.has(soNum)) continue;
+          const isBlocked = !!(order.billingBlock || '').toString().trim();
+          if (isBlocked) continue;
+
+          const lines = order.lines || [];
+          const orderSkuNeeds = {};
+          lines.forEach(l => {
+            const sku = _norm(l.sku);
+            const qty = Number(l.qty) || 0;
+            if (sku && qty > 0) orderSkuNeeds[sku] = (orderSkuNeeds[sku] || 0) + qty;
+          });
+
+          let canBeClear = true;
+          for (const sku of Object.keys(orderSkuNeeds)) {
+            const needed = orderSkuNeeds[sku] || 0;
+            const availTotal = (runInh[sku] || 0) + (runTrn[sku] || 0);
+            if (needed > availTotal) {
+              canBeClear = false;
+              break;
+            }
+          }
+
+          if (canBeClear) {
+            processedTransitClear.add(soNum);
+            const preDeductInh = {};
+            Object.keys(orderSkuNeeds).forEach(sku => { preDeductInh[sku] = runInh[sku] || 0; });
+
+            Object.keys(orderSkuNeeds).forEach(sku => {
+              const needed = orderSkuNeeds[sku];
+              const fromInh = Math.min(runInh[sku] || 0, needed);
+              const fromTrn = Math.min(runTrn[sku] || 0, needed - fromInh);
+              runInh[sku] = Math.max(0, (runInh[sku] || 0) - fromInh);
+              runTrn[sku] = Math.max(0, (runTrn[sku] || 0) - fromTrn);
+            });
+
+            const customerName = order.partyName || order.customerName || '';
+            const custRef = order.destCity || order.custRef || '';
+            const orderDate = order.soDate || order.orderDate || new Date().toISOString().split('T')[0];
+            let totalOrderQty = 0;
+            let totalTransitQty = 0;
+            const skuInhUsed = {};
+
+            for (const line of lines) {
+              const sku = _norm(line.sku);
+              const reqQty = Number(line.qty) || 0;
+              if (!sku || reqQty <= 0) continue;
+              totalOrderQty += reqQty;
+
+              const inhAvail = Math.max(0, (preDeductInh[sku] || 0) - (skuInhUsed[sku] || 0));
+              const lineFromInh = Math.min(inhAvail, reqQty);
+              const lineFromTrn = reqQty - lineFromInh;
+              skuInhUsed[sku] = (skuInhUsed[sku] || 0) + lineFromInh;
+
+              await query(
+                'INSERT INTO sap_stk_allocation (warehouse, timestamp, so_no, so_date, party_name, reference, sku_code, inhand_alloc, transit_alloc, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, lineFromInh, lineFromTrn, userId]
+              );
+
+              if (lineFromTrn > 0) {
+                totalTransitQty += lineFromTrn;
+                const statusBT = lineFromInh === 0 ? "NO STOCK" : "SHORT";
+                await query(
+                  'INSERT INTO shortage_partial (warehouse, so_no, party_name, so_date, sku_code, description, req_qty, avail_inhand, short_bt, status_bt, transit_used, short_at, status_at, submit_time, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                  [warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, lineFromInh, lineFromTrn, statusBT, lineFromTrn, 0, 'OK', tsStr, userId]
+                );
+              }
+            }
+
+            const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), desc: l.desc || '', qty: Number(l.qty) || 0 })));
+            await query(
+              'INSERT INTO partial_clear_orders (warehouse, so_no, so_date, party_name, reference, submit_time, clear_lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+              [warehouse, soNum, orderDate, customerName, custRef, tsStr, linesJSON, userId]
+            );
+
+            await query(
+              'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Picking']
+            );
+
+            await query(
+              'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Full Allocation (Transit)']
+            );
+
+            results[soNum] = { status: "PARTIAL", isUpdate: true, clearLines: lines.length, shortLines: 0 };
+            insertedCount++;
+          }
+        }
+
+        // PASS 3: Remaining Partial / Shortage / Blocked Orders
+        for (const order of validOrders) {
+          const soNum = _norm(order.soNumber || order.orderNo);
+          if (processedClear.has(soNum) || processedTransitClear.has(soNum)) continue;
+
+          const isBlocked = !!(order.billingBlock || '').toString().trim();
+          const customerName = order.partyName || order.customerName || '';
+          const custRef = order.destCity || order.custRef || '';
+          const orderDate = order.soDate || order.orderDate || new Date().toISOString().split('T')[0];
+          const lines = order.lines || [];
+          const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), desc: l.desc || '', qty: Number(l.qty) || 0 })));
+
+          if (isBlocked) {
+            const totalOrderQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+            await query(
+              'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Without Allocation (Block)', 'Picking']
+            );
+            await query(
+              'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Without Allocation (Block)', 'Without Allocation (Block)']
+            );
+            results[soNum] = { status: "DONE", isUpdate: true, clearLines: lines.length, shortLines: 0 };
+            insertedCount++;
+            continue;
+          }
+
+          const clearLines = [];
+          const shortLines = [];
+          let totalOrderQty = 0;
+          let totalTransitQty = 0;
+          let totalShortQty = 0;
 
           for (const line of lines) {
             const sku = _norm(line.sku);
             const reqQty = Number(line.qty) || 0;
             if (!sku || reqQty <= 0) continue;
 
-            const phyBins = await query('SELECT * FROM phy_stk_entry WHERE sku_code = ? AND available_qty > 0 ORDER BY updated_at ASC', [sku]);
-            let allocated = 0;
-            for (const b of phyBins) {
-              if (allocated >= reqQty) break;
-              const avail = Number(b.available_qty) || 0;
-              const allocQty = Math.min(avail, reqQty - allocated);
+            const curInh = Math.max(0, runInh[sku] || 0);
+            const curTrn = Math.max(0, runTrn[sku] || 0);
 
+            const inhAlloc = Math.min(curInh, reqQty);
+            const shortBT = Math.max(0, reqQty - inhAlloc);
+            const statusBT = shortBT === 0 ? "OK" : (curInh === 0 ? "NO STOCK" : "SHORT");
+            const trnUsed = Math.min(curTrn, shortBT);
+            const shortAT = Math.max(0, shortBT - trnUsed);
+            const statusAT = shortAT === 0 ? "OK" : (shortBT > 0 && curTrn === 0 ? "NO STOCK" : "SHORT");
+
+            runInh[sku] = Math.max(0, curInh - inhAlloc);
+            runTrn[sku] = Math.max(0, curTrn - trnUsed);
+
+            totalOrderQty += reqQty;
+
+            if (inhAlloc > 0 || trnUsed > 0) {
+              clearLines.push({ sku: sku, qty: inhAlloc + trnUsed, desc: line.desc || '' });
               await query(
-                'INSERT INTO phy_stk_allocation (warehouse, order_no, sku_code, bin_no, allocated_qty, mfg_month, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, soNum, sku, b.bin_no, allocQty, b.mfg_month || '', userId]
+                'INSERT INTO sap_stk_allocation (warehouse, timestamp, so_no, so_date, party_name, reference, sku_code, inhand_alloc, transit_alloc, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [warehouse, tsStr, soNum, orderDate, customerName, custRef, sku, inhAlloc, trnUsed, userId]
               );
-              allocated += allocQty;
             }
 
-            if (allocated >= reqQty) {
-              clearLinesCount++;
-            } else {
-              shortLinesCount++;
-              const shortQty = reqQty - allocated;
-              totalShortage += shortQty;
+            if (trnUsed > 0) totalTransitQty += trnUsed;
+
+            if (shortAT > 0 || shortBT > 0) {
+              totalShortQty += shortAT;
+              shortLines.push({ sku: sku, reqQty: reqQty, shortAT: shortAT });
               await query(
-                'INSERT INTO shortage_partial (warehouse, so_no, party_name, sku_code, req_qty, avail_inhand, short_bt, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                [warehouse, soNum, customerName, sku, reqQty, allocated, shortQty, userId]
+                'INSERT INTO shortage_partial (warehouse, so_no, party_name, so_date, sku_code, description, req_qty, avail_inhand, short_bt, status_bt, transit_used, short_at, status_at, submit_time, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, inhAlloc, shortBT, statusBT, trnUsed, shortAT, statusAT, tsStr, userId]
               );
             }
           }
 
-          const allocRemark = shortLinesCount > 0 ? (clearLinesCount > 0 ? "PARTIAL ALLOCATION" : "NO STOCK") : "FULL ALLOCATION";
+          const isPartial = shortLines.length > 0;
+          const allocRemark = isPartial ? "Partial Allocation" : (totalTransitQty > 0 ? "Full Allocation (Transit)" : "Full Allocation (Inhand)");
+          const finalShortage = isPartial ? totalShortQty : totalTransitQty;
+
+          if (!isPartial) {
+            await query(
+              'INSERT INTO clear_order (warehouse, so_no, so_date, party_name, reference, submit_time, total_lines, lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]
+            );
+          } else {
+            const clearJSON = JSON.stringify(clearLines);
+            await query(
+              'INSERT INTO partial_clear_orders (warehouse, so_no, so_date, party_name, reference, submit_time, clear_lines_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+              [warehouse, soNum, orderDate, customerName, custRef, tsStr, clearJSON, userId]
+            );
+          }
 
           await query(
             'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalQty, totalShortage, allocRemark, 'Picking']
+            [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, finalShortage, allocRemark, 'Picking']
           );
 
           await query(
             'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalQty, totalShortage, allocRemark, allocRemark]
+            [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, finalShortage, allocRemark, allocRemark]
           );
 
-          results[soNum] = { status: "DONE", isUpdate: isUpdate, clearLines: clearLinesCount, shortLines: shortLinesCount };
+          results[soNum] = {
+            status: isPartial ? "PARTIAL" : "DONE",
+            isUpdate: true,
+            clearLines: clearLines.length,
+            shortLines: shortLines.length
+          };
           insertedCount++;
         }
 
