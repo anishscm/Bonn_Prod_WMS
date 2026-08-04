@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const nodemailer = require('nodemailer');
 const { query, initDb } = require('./db');
 
 const app = express();
@@ -30,6 +31,37 @@ app.get('/', (req, res) => {
   }
 });
 
+// Nodemailer Transporter Configuration
+const mailTransporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.SMTP_PORT || '587'),
+  secure: process.env.SMTP_SECURE === 'true',
+  auth: {
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || ''
+  }
+});
+
+async function sendEmailNotification(to, subject, bodyHtml) {
+  if (!process.env.SMTP_USER || !to) {
+    console.log(`[Email Alert Skipped (SMTP Credentials missing or no recipient)]: Subject="${subject}", To="${to}"`);
+    return false;
+  }
+  try {
+    await mailTransporter.sendMail({
+      from: `"Bonn WMS System" <${process.env.SMTP_USER}>`,
+      to: to,
+      subject: subject,
+      html: bodyHtml
+    });
+    console.log(`[Email Sent Successfully] To: ${to}, Subject: ${subject}`);
+    return true;
+  } catch (err) {
+    console.error(`[Email Error]:`, err.message);
+    return false;
+  }
+}
+
 const DEFAULT_AUTH_HEADERS = [
   "User ID", "Name", "Password", "Assigned Warehouses",
   "Admin_UserAuth", "Admin_ActivityLog", "Admin_ResetData",
@@ -54,6 +86,18 @@ function _parseNum(val) {
   return isNaN(num) ? 0 : num;
 }
 
+function _fmtDate(dt) {
+  if (!dt) return "";
+  if (typeof dt === 'string') return dt;
+  try {
+    const d = new Date(dt);
+    if (isNaN(d.getTime())) return "";
+    return d.toISOString().split('T')[0];
+  } catch(e) {
+    return "";
+  }
+}
+
 function fc(headerRow, keys) {
   const normHeader = headerRow.map(h => _norm(h));
   const normKeys = keys.map(k => _norm(k));
@@ -71,6 +115,126 @@ function fc(headerRow, keys) {
   return -1;
 }
 
+// Warehouses matching helper
+function _matchWh(cellVal, targetVal) {
+  var c = _norm(cellVal);
+  var t = _norm(targetVal);
+  if (!t || t === "ALL") return true;
+  if (c === t) return true;
+  if ((c === "BB04" || c === "1002") && (t === "BB04" || t === "1002")) return true;
+  if ((c === "BB02" || c === "1001") && (t === "BB02" || t === "1001")) return true;
+  return false;
+}
+
+// -------------------------------------------------------------
+// STOCK MODEL HELPERS (SAP Stock vs Physical Bin Allocation)
+// -------------------------------------------------------------
+
+// 1. Build Raw SAP Stock Map (from sap_stk_dump)
+async function _buildRawStockMapSQL(warehouse) {
+  const whNorm = _norm(warehouse || 'BB04');
+  const rows = await query('SELECT * FROM sap_stk_dump');
+  const stockMap = {};
+
+  rows.forEach(r => {
+    const rWh = _norm(r.warehouse);
+    if (whNorm !== 'ALL' && !_matchWh(rWh, whNorm)) return;
+
+    const sku = _norm(r.material_code);
+    if (!sku) return;
+
+    if (!stockMap[sku]) {
+      stockMap[sku] = {
+        desc: r.material_desc || sku,
+        sap: 0,
+        transit: 0
+      };
+    }
+    stockMap[sku].sap += Number(r.total_unrestricted) || 0;
+    stockMap[sku].transit += Number(r.total_transit) || 0;
+  });
+
+  return stockMap;
+}
+
+// 2. Build SAP Allocation Map (from sap_stk_allocation)
+async function _buildAllocMapSQL(warehouse) {
+  const whNorm = _norm(warehouse || 'BB04');
+  const rows = await query('SELECT * FROM sap_stk_allocation');
+  const allocMap = {};
+
+  rows.forEach(r => {
+    const rWh = _norm(r.warehouse);
+    if (whNorm !== 'ALL' && !_matchWh(rWh, whNorm)) return;
+
+    const sku = _norm(r.sku_code);
+    if (!sku) return;
+
+    if (!allocMap[sku]) {
+      allocMap[sku] = { inh: 0, trn: 0 };
+    }
+    allocMap[sku].inh += Number(r.inhand_alloc) || 0;
+    allocMap[sku].trn += Number(r.transit_alloc) || 0;
+  });
+
+  return allocMap;
+}
+
+// 3. Build Physical Bin Stock Map (from phy_stk_entry)
+async function _buildPhyStockMapSQL(warehouse) {
+  const whNorm = _norm(warehouse || 'BB04');
+  const rows = await query('SELECT * FROM phy_stk_entry WHERE available_qty > 0');
+  const phyMap = {};
+
+  rows.forEach(r => {
+    const rWh = _norm(r.plant);
+    if (whNorm !== 'ALL' && !_matchWh(rWh, whNorm)) return;
+
+    const sku = _norm(r.sku_code);
+    if (!sku) return;
+
+    if (!phyMap[sku]) {
+      phyMap[sku] = [];
+    }
+    phyMap[sku].push({
+      bin: r.bin_no,
+      mfg: r.mfg_month,
+      qty: Number(r.available_qty) || 0,
+      desc: r.product_name || sku,
+      id: r.id
+    });
+  });
+
+  return phyMap;
+}
+
+// Repair Allocation Remarks in Operation Sheet & Outward MIS
+async function opRepairAllocationRemarksSQL() {
+  try {
+    const opRows = await query('SELECT id, shortage_qty, alloc_remark FROM operation_sheet');
+    for (const r of opRows) {
+      const rem = (r.alloc_remark || '').trim();
+      if (rem === 'Picking' || rem === 'Confirmed Outbound' || rem === 'Confirmed') {
+        const sQty = Number(r.shortage_qty) || 0;
+        const newRem = sQty > 0 ? 'Partial Allocation' : 'Full Allocation (Inhand)';
+        await query('UPDATE operation_sheet SET alloc_remark = ? WHERE id = ?', [newRem, r.id]);
+      }
+    }
+
+    const misRows = await query('SELECT id, shortage_qty, alloc_remark FROM outward_mis');
+    for (const r of misRows) {
+      const rem = (r.alloc_remark || '').trim();
+      if (rem === 'Picking' || rem === 'Confirmed Outbound' || rem === 'Confirmed') {
+        const sQty = Number(r.shortage_qty) || 0;
+        const newRem = sQty > 0 ? 'Partial Allocation' : 'Full Allocation (Inhand)';
+        await query('UPDATE outward_mis SET alloc_remark = ? WHERE id = ?', [newRem, r.id]);
+      }
+    }
+  } catch(e) {
+    console.error('Error repairing allocation remarks:', e.message);
+  }
+}
+
 // =================================================================
 // UNIVERSAL HIGH-PERFORMANCE SQL BRIDGE ENGINE
 // Preserving 100% of Google Apps Script (Code_Prod_WMS.gs) Logic & Payloads
@@ -82,13 +246,13 @@ app.post('/api/gas-bridge', async (req, res) => {
   try {
     switch(fn) {
       // -------------------------------------------------------------
-      // 1. AUTHENTICATION & USER MANAGEMENT
+      // 1. AUTHENTICATION & USER MANAGEMENT (SINGLE DEVICE LOGIN)
       // -------------------------------------------------------------
       case 'wmsLogin':
-      case 'wmsForceLogin':
       case 'attemptLogin': {
         const uid = (args[0] || 'admin').trim();
         const pass = (args[1] || '').trim();
+        const deviceId = (args[2] || 'browser_' + Date.now()).trim();
 
         const rows = await query('SELECT * FROM user_auth');
         const match = rows.find(r => 
@@ -101,6 +265,34 @@ app.post('/api/gas-bridge', async (req, res) => {
             return res.json({ success: true, result: { status: "FAIL", message: "Invalid Password" } });
           }
 
+          // Single Device Login Verification
+          const userIdKey = match["User ID"] || match.user_id || uid;
+          const activeSession = await query('SELECT * FROM sessions WHERE user_id = ?', [userIdKey]);
+          const newSessionToken = "sess_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
+
+          if (activeSession && activeSession.length > 0) {
+            const sess = activeSession[0];
+            // If already logged in on a different device within last 12 hours
+            const lastLoginTime = new Date(sess.last_login).getTime();
+            const twelveHours = 12 * 60 * 60 * 1000;
+            if (sess.device_id && sess.device_id !== deviceId && (Date.now() - lastLoginTime) < twelveHours) {
+              return res.json({
+                success: true,
+                result: {
+                  status: "ALREADY_LOGGED_IN",
+                  message: `User ${userIdKey} is already logged in on another device. Do you want to force log out the active device?`
+                }
+              });
+            }
+          }
+
+          // Save/Update Session
+          await query('DELETE FROM sessions WHERE user_id = ?', [userIdKey]);
+          await query(
+            'INSERT INTO sessions (user_id, session_token, last_login, device_id) VALUES (?, ?, ?, ?)',
+            [userIdKey, newSessionToken, new Date().toISOString(), deviceId]
+          );
+
           const permissionsObj = {};
           DEFAULT_AUTH_HEADERS.slice(4).forEach(h => {
             const val = (match[h] || 'YES').toString().toUpperCase().trim();
@@ -112,30 +304,97 @@ app.post('/api/gas-bridge', async (req, res) => {
             result: {
               status: "SUCCESS",
               user: {
-                id: match["User ID"] || match.user_id || uid,
-                name: match["Name"] || match.name || uid,
-                sessionId: "sess_" + Date.now(),
+                id: userIdKey,
+                name: match["Name"] || match.name || userIdKey,
+                sessionId: newSessionToken,
+                deviceId: deviceId,
                 warehouses: match["Assigned Warehouses"] || match.assigned_warehouses || "*"
               },
               permissions: permissionsObj
             }
           });
         } else {
+          // Admin Fallback
           const fullPermissions = {};
           DEFAULT_AUTH_HEADERS.slice(4).forEach(h => fullPermissions[h] = true);
+          const newSessionToken = "sess_" + Date.now();
+          await query('DELETE FROM sessions WHERE user_id = ?', [uid]);
+          await query('INSERT INTO sessions (user_id, session_token, last_login, device_id) VALUES (?, ?, ?, ?)', [uid, newSessionToken, new Date().toISOString(), deviceId]);
+
           return res.json({
             success: true,
             result: {
               status: "SUCCESS",
-              user: { id: uid, name: "Anish Shakya", sessionId: "sess_" + Date.now(), warehouses: "*" },
+              user: { id: uid, name: "Anish Shakya", sessionId: newSessionToken, deviceId: deviceId, warehouses: "*" },
               permissions: fullPermissions
             }
           });
         }
       }
 
-      case 'wmsLogoutSession':
+      case 'wmsForceLogin': {
+        const uid = (args[0] || 'admin').trim();
+        const pass = (args[1] || '').trim();
+        const deviceId = (args[2] || 'browser_' + Date.now()).trim();
+
+        const rows = await query('SELECT * FROM user_auth');
+        const match = rows.find(r => 
+          (r["User ID"] || r.user_id || '').toString().toLowerCase().trim() === uid.toLowerCase()
+        );
+
+        const userIdKey = match ? (match["User ID"] || match.user_id || uid) : uid;
+        const newSessionToken = "sess_force_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
+
+        await query('DELETE FROM sessions WHERE user_id = ?', [userIdKey]);
+        await query(
+          'INSERT INTO sessions (user_id, session_token, last_login, device_id) VALUES (?, ?, ?, ?)',
+          [userIdKey, newSessionToken, new Date().toISOString(), deviceId]
+        );
+
+        const fullPermissions = {};
+        DEFAULT_AUTH_HEADERS.slice(4).forEach(h => {
+          if (match) {
+            const val = (match[h] || 'YES').toString().toUpperCase().trim();
+            fullPermissions[h] = (val === 'YES' || val === 'TRUE' || val === '1');
+          } else {
+            fullPermissions[h] = true;
+          }
+        });
+
+        return res.json({
+          success: true,
+          result: {
+            status: "SUCCESS",
+            user: {
+              id: userIdKey,
+              name: match ? (match["Name"] || match.name || userIdKey) : "Anish Shakya",
+              sessionId: newSessionToken,
+              deviceId: deviceId,
+              warehouses: match ? (match["Assigned Warehouses"] || match.assigned_warehouses || "*") : "*"
+            },
+            permissions: fullPermissions
+          }
+        });
+      }
+
+      case 'wmsLogoutSession': {
+        const uid = (args[0] || '').trim();
+        if (uid) {
+          await query('DELETE FROM sessions WHERE user_id = ?', [uid]);
+        }
+        return res.json({ success: true, result: { status: "OK" } });
+      }
+
       case 'wmsHeartbeat': {
+        const uid = (args[0] || '').trim();
+        const sessionToken = (args[1] || '').trim();
+        if (uid && sessionToken) {
+          const sess = await query('SELECT * FROM sessions WHERE user_id = ?', [uid]);
+          if (sess && sess.length > 0 && sess[0].session_token !== sessionToken) {
+            return res.json({ success: true, result: { status: "LOGGED_OUT_BY_OTHER_DEVICE" } });
+          }
+          await query('UPDATE sessions SET last_login = ? WHERE user_id = ?', [new Date().toISOString(), uid]);
+        }
         return res.json({ success: true, result: { status: "OK" } });
       }
 
@@ -195,7 +454,6 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'wmsResetSalesData':
       case 'ocResetAllSheets':
       case 'ocResetAllTransactionalSheets': {
-        // Query exact row counts before deleting
         const resDump = await query('SELECT COUNT(*) as cnt FROM sap_stk_dump');
         const resAlloc = await query('SELECT COUNT(*) as cnt FROM sap_stk_allocation');
         const resPartial = await query('SELECT COUNT(*) as cnt FROM partial_clear_orders');
@@ -211,7 +469,6 @@ app.post('/api/gas-bridge', async (req, res) => {
         const cntClear = getCnt(resClear);
         const cntChecker = getCnt(resChecker);
 
-        // Delete from all sales transactional tables
         await query('DELETE FROM sap_stk_dump');
         await query('DELETE FROM sap_stk_allocation');
         await query('DELETE FROM partial_clear_orders');
@@ -276,6 +533,41 @@ app.post('/api/gas-bridge', async (req, res) => {
             mails
           }
         });
+      }
+
+      case 'wmsSavePartyMaster': {
+        const data = args[0] || {};
+        if (data.contractor_name || data.supervisor_name || data.tpt_name) {
+          await query(
+            'INSERT INTO party_master (contractor_name, supervisor_name, tpt_name, tpt_gst) VALUES (?, ?, ?, ?)',
+            [data.contractor_name || '', data.supervisor_name || '', data.tpt_name || '', data.tpt_gst || '']
+          );
+        }
+        return res.json({ success: true, result: { status: "SUCCESS", message: "Party Master entry saved!" } });
+      }
+
+      case 'wmsSaveSkuMaster': {
+        const skus = Array.isArray(args[0]) ? args[0] : [args[0]];
+        for (const s of skus) {
+          if (!s.sku_code) continue;
+          await query(
+            'INSERT INTO sku_masters (sku_code, sku_name, description, uom, plant, sloc) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(sku_code) DO UPDATE SET sku_name=EXCLUDED.sku_name, description=EXCLUDED.description',
+            [s.sku_code, s.sku_name || s.sku_code, s.description || '', s.uom || 'PCS', s.plant || 'BB04', s.sloc || 'FG01']
+          );
+        }
+        return res.json({ success: true, result: { status: "SUCCESS", message: "SKU Master updated!" } });
+      }
+
+      case 'wmsSaveBinMaster': {
+        const bins = Array.isArray(args[0]) ? args[0] : [args[0]];
+        for (const b of bins) {
+          if (!b.bin_code) continue;
+          await query(
+            'INSERT INTO bin_masters (bin_code, wh_code, zone, type, max_capacity, status) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(bin_code) DO UPDATE SET zone=EXCLUDED.zone, status=EXCLUDED.status',
+            [b.bin_code, b.wh_code || 'BB04', b.zone || 'A', b.type || 'PALLET', Number(b.max_capacity) || 1000, b.status || 'Available']
+          );
+        }
+        return res.json({ success: true, result: { status: "SUCCESS", message: "Bin Master updated!" } });
       }
 
       // -------------------------------------------------------------
@@ -436,39 +728,26 @@ app.post('/api/gas-bridge', async (req, res) => {
 
       case 'ocGetStock': {
         const warehouse = args[0] || 'BB04';
-        const dumpRows = await query('SELECT material_code, material_desc, total_unrestricted, total_transit FROM sap_stk_dump');
-        const phyStock = await query('SELECT sku_code, SUM(available_qty) as total_phy FROM phy_stk_entry GROUP BY sku_code');
-        const allocs = await query('SELECT sku_code, SUM(allocated_qty) as total_alloc FROM phy_stk_allocation GROUP BY sku_code');
+        const rawStock = await _buildRawStockMapSQL(warehouse);
+        const allocStock = await _buildAllocMapSQL(warehouse);
 
         const stockMap = {};
-        dumpRows.forEach(r => {
-          const sku = _norm(r.material_code);
+        Object.keys(rawStock).forEach(sku => {
+          const st = rawStock[sku];
+          const al = allocStock[sku] || { inh: 0, trn: 0 };
+          const availInhand = Math.max(0, st.sap - al.inh);
+          const availTransit = Math.max(0, st.transit - al.trn);
+
           stockMap[sku] = {
             sku: sku,
-            desc: r.material_desc || '',
-            sap: Number(r.total_unrestricted) || 0,
-            transit: Number(r.total_transit) || 0,
-            inhAlloc: 0,
-            trnAlloc: 0,
-            availInhand: Number(r.total_unrestricted) || 0,
-            availTotal: (Number(r.total_unrestricted) || 0) + (Number(r.total_transit) || 0)
+            desc: st.desc,
+            sap: st.sap,
+            transit: st.transit,
+            inhAlloc: al.inh,
+            trnAlloc: al.trn,
+            availInhand: availInhand,
+            availTotal: availInhand + availTransit
           };
-        });
-
-        phyStock.forEach(r => {
-          const sku = _norm(r.sku_code);
-          if (!stockMap[sku]) {
-            stockMap[sku] = { sku: sku, desc: sku, sap: 0, transit: 0, inhAlloc: 0, trnAlloc: 0, availInhand: 0, availTotal: 0 };
-          }
-          stockMap[sku].availInhand = Number(r.total_phy) || 0;
-        });
-
-        allocs.forEach(r => {
-          const sku = _norm(r.sku_code);
-          if (stockMap[sku]) {
-            stockMap[sku].inhAlloc = Number(r.total_alloc) || 0;
-            stockMap[sku].availInhand = Math.max(0, stockMap[sku].availInhand - stockMap[sku].inhAlloc);
-          }
         });
 
         return res.json({ success: true, result: Object.values(stockMap) });
@@ -480,7 +759,6 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'ocCheckDuplicateOrders': {
         const warehouse = args[0] || 'BB04';
         const soNumbers = Array.isArray(args[1]) ? args[1] : [args[1]];
-        const type = args[2] || '';
 
         const existingRows = await query('SELECT order_no FROM operation_sheet');
         const existingSet = new Set(existingRows.map(r => _norm(r.order_no)));
@@ -501,6 +779,248 @@ app.post('/api/gas-bridge', async (req, res) => {
             existingSOs: Array.from(existingSet)
           }
         });
+      }
+
+      case 'opCheckSingleOrderItems': {
+        const warehouse = args[0] || 'BB04';
+        const salesDocument = args[1] || '';
+        const pastedText = args[2] || '';
+
+        const rawStock = await _buildRawStockMapSQL(warehouse);
+        const allocStock = await _buildAllocMapSQL(warehouse);
+
+        const lines = (pastedText || "").split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        const pastedMap = {};
+        const descMap = {};
+
+        lines.forEach(line => {
+          let cols = line.split(/\t/).map(c => c.trim());
+          if (cols.length < 2) cols = line.split(/[\t,;|]+/).map(c => c.trim());
+          if (cols.length < 2) return;
+
+          let sku = "", qty = 0, desc = "";
+          if (cols.length >= 3 && /^\d+$/.test(cols[0])) {
+            sku = _norm(cols[1]);
+            qty = parseFloat((cols[2] || "").replace(/,/g, "")) || 0;
+            desc = cols[4] || cols[3] || "";
+          } else {
+            sku = _norm(cols[0]);
+            qty = parseFloat((cols[1] || "").replace(/,/g, "")) || 0;
+            desc = cols[2] || "";
+          }
+
+          if (!sku || qty <= 0) return;
+          pastedMap[sku] = (pastedMap[sku] || 0) + qty;
+          if (!descMap[sku] && desc) descMap[sku] = desc;
+        });
+
+        const itemsList = [];
+        let isAllClear = true;
+
+        Object.keys(pastedMap).forEach(sku => {
+          const reqQty = pastedMap[sku];
+          const st = rawStock[sku] || { sap: 0, transit: 0, desc: descMap[sku] || "Pasted SKU" };
+          const al = allocStock[sku] || { inh: 0, trn: 0 };
+
+          const inhandTotal = Number(st.sap) || 0;
+          const transitTotal = Number(st.transit) || 0;
+          const allocInhand = Number(al.inh) || 0;
+          const allocTransit = Number(al.trn) || 0;
+
+          const availInhand = Math.max(0, inhandTotal - allocInhand);
+          const availTransit = Math.max(0, transitTotal - allocTransit);
+
+          const inhAlloc = Math.min(availInhand, reqQty);
+          const shortBT = Math.max(0, reqQty - inhAlloc);
+          const statusBT = (shortBT === 0) ? "OK" : (availInhand === 0 ? "NO STOCK" : "SHORT");
+
+          const trnUsed = Math.min(availTransit, shortBT);
+          const shortAT = Math.max(0, shortBT - trnUsed);
+          const statusAT = (shortAT === 0) ? "OK" : (shortBT > 0 && availTransit === 0 ? "NO STOCK" : "SHORT");
+
+          if (statusBT !== "OK") isAllClear = false;
+
+          itemsList.push({
+            sku: sku,
+            desc: descMap[sku] || st.desc,
+            reqQty: reqQty,
+            pastedQty: reqQty,
+            inhand: inhandTotal,
+            transit: transitTotal,
+            allocInhand: allocInhand,
+            availInhand: availInhand,
+            shortBT: shortBT,
+            statusBT: statusBT,
+            trnUsed: trnUsed,
+            shortAT: shortAT,
+            statusAT: statusAT
+          });
+        });
+
+        return res.json({
+          success: true,
+          result: {
+            status: "SUCCESS",
+            isAllClear: isAllClear,
+            items: itemsList,
+            message: isAllClear ? "All items clear before transit!" : "Order has shortages before transit."
+          }
+        });
+      }
+
+      case 'opAllocateOBDBatches': {
+        const warehouse = args[0] || 'BB04';
+        const salesDocument = args[1] || '';
+        const pastedItems = args[2] || [];
+        const preferredSloc = _norm(args[3] || 'FG01');
+
+        const whNorm = _norm(warehouse);
+        const dumpRows = await query('SELECT * FROM sap_stk_dump');
+        const stockMap = {};
+
+        dumpRows.forEach(r => {
+          if (_norm(r.warehouse) !== whNorm) return;
+          const sloc = (r.sloc || 'FG01').toString().trim();
+          const mat = _norm(r.material_code);
+          const desc = (r.material_desc || '').toString().trim();
+          const rawBatchCol = r.batch_json;
+          const totalQty = Number(r.total_unrestricted) || 0;
+
+          if (!mat) return;
+          if (!stockMap[mat]) stockMap[mat] = [];
+
+          let parsedBatches = [];
+          try {
+            if (typeof rawBatchCol === 'string' && rawBatchCol.indexOf("[") >= 0) {
+              parsedBatches = JSON.parse(rawBatchCol);
+            }
+          } catch(e) {}
+
+          if (Array.isArray(parsedBatches) && parsedBatches.length > 0) {
+            parsedBatches.forEach(b => {
+              const bQty = Number(b.qty) || 0;
+              if (bQty > 0) {
+                stockMap[mat].push({ sloc, batch: (b.batch || "DEFAULT").toString().trim(), qty: bQty, valType: b.valType || "-", desc });
+              }
+            });
+          } else if (totalQty > 0) {
+            stockMap[mat].push({ sloc, batch: "BATCH_01", qty: totalQty, valType: "-", desc });
+          }
+        });
+
+        const previewRows = [];
+        let overallSuccess = true;
+
+        pastedItems.forEach(line => {
+          const mat = _norm(line.sku);
+          let remaining = Number(line.reqQty || line.pastedQty || line.qty) || 0;
+          const requiredQty = remaining;
+          let allocatedForLine = 0;
+          const availableBatches = stockMap[mat] || [];
+          const lineAllocations = [];
+
+          // Preferred Sloc Pass
+          if (preferredSloc !== 'ALL') {
+            for (let b of availableBatches) {
+              if (remaining <= 0) break;
+              if (_norm(b.sloc) !== preferredSloc || b.qty <= 0) continue;
+              const take = Math.min(remaining, b.qty);
+              lineAllocations.push({ batch: b.batch, allocQty: take, sloc: b.sloc, valType: b.valType || "-", desc: b.desc || line.desc });
+              b.qty -= take;
+              remaining -= take;
+              allocatedForLine += take;
+            }
+          }
+
+          // Fallback Pass
+          for (let b2 of availableBatches) {
+            if (remaining <= 0) break;
+            if (b2.qty <= 0) continue;
+            const take2 = Math.min(remaining, b2.qty);
+            lineAllocations.push({ batch: b2.batch, allocQty: take2, sloc: b2.sloc, valType: b2.valType || "-", desc: b2.desc || line.desc });
+            b2.qty -= take2;
+            remaining -= take2;
+            allocatedForLine += take2;
+          }
+
+          let status = "FULL";
+          if (remaining > 0) {
+            overallSuccess = false;
+            status = (allocatedForLine > 0) ? "SHORT" : "NO STOCK";
+          }
+
+          if (lineAllocations.length === 0) {
+            previewRows.push({
+              soNumber: salesDocument, sku: mat, desc: line.desc || "Item Description", valType: "-",
+              reqQty: requiredQty, batch: "-", allocQty: 0, status: "NO STOCK", shortfall: requiredQty, sloc: preferredSloc !== "ALL" ? preferredSloc : "FG01", notes: "No stock in dump", isSplit: false
+            });
+          } else {
+            const first = lineAllocations[0];
+            previewRows.push({
+              soNumber: salesDocument, sku: mat, desc: line.desc || first.desc || "Item Description", valType: first.valType,
+              reqQty: requiredQty, batch: first.batch, allocQty: first.allocQty, status: status, shortfall: remaining > 0 ? remaining : 0, sloc: first.sloc, notes: lineAllocations.length > 1 ? "Split Batch (1/" + lineAllocations.length + ")" : "Full Single Batch", isSplit: false
+            });
+            for (let k = 1; k < lineAllocations.length; k++) {
+              const sp = lineAllocations[k];
+              previewRows.push({
+                soNumber: salesDocument, sku: "↳ SPLIT", desc: line.desc || sp.desc || "Item Description", valType: sp.valType,
+                reqQty: "", batch: sp.batch, allocQty: sp.allocQty, status: "SPLIT", shortfall: "", sloc: sp.sloc, notes: "Split Batch (" + (k + 1) + "/" + lineAllocations.length + ")", isSplit: true
+              });
+            }
+          }
+        });
+
+        return res.json({
+          success: true,
+          result: { status: "SUCCESS", rows: previewRows, isAllClear: overallSuccess }
+        });
+      }
+
+      case 'opDeductBatchPickingAndMIS': {
+        const warehouse = args[0] || 'BB04';
+        const salesDocument = _norm(args[1] || '');
+        const obdNumber = (args[2] || '').toString().trim();
+        const allocatedRows = args[3] || [];
+        const opRowData = args[4] || {};
+
+        if (!obdNumber) return res.json({ success: true, result: { status: "ERROR", message: "8-Digit OBD Number is required." } });
+
+        const totalPgiQty = allocatedRows.reduce((acc, r) => acc + (Number(r.allocQty) || 0), 0);
+
+        // Update Operation Sheet
+        await query(
+          'UPDATE operation_sheet SET obd = ?, status = ?, dispatch_qty = ? WHERE order_no = ?',
+          [obdNumber, 'PGI Done', totalPgiQty, salesDocument]
+        );
+
+        // Append to Outward MIS
+        for (const r of allocatedRows) {
+          const pgiQty = Number(r.allocQty) || 0;
+          if (pgiQty <= 0) continue;
+          const mat = _norm(r.sku).indexOf("SPLIT") >= 0 ? (r.lastSku || r.sku) : _norm(r.sku);
+
+          await query(
+            'INSERT INTO outward_mis (plant, order_no, order_date, customer_name, cust_ref, order_qty, shortage_qty, alloc_remark, shortage_remark, order_status, vehicle_no, driver_no, tpt_name, sku_code, description, batch, pgi_qty, dispatch_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+              opRowData.plant || warehouse, salesDocument, opRowData.orderDate || '', opRowData.customerName || '', opRowData.customerRefNo || '',
+              opRowData.orderQty || 0, opRowData.shortageQty || 0, opRowData.allocationRemark || '', opRowData.shortageRemark || '', 'PGI Done',
+              opRowData.vehicleNumber || '', opRowData.driverNumber || '', opRowData.tptName || '', mat, r.desc || 'Item Description', r.batch || '', pgiQty, pgiQty
+            ]
+          );
+        }
+
+        // Email Alert check (if mail master configured)
+        const mails = await query('SELECT email FROM mail_masters WHERE module = ? AND short_excess_mail = ?', ['OUTWARD', 'YES']);
+        if (mails && mails.length > 0) {
+          const recipients = mails.map(m => m.email).join(',');
+          sendEmailNotification(
+            recipients,
+            `[WMS Alert] OBD PGI Done for Order ${salesDocument}`,
+            `<p>Order <b>${salesDocument}</b> has been completed with OBD <b>${obdNumber}</b>. Total PGI Qty: <b>${totalPgiQty}</b>.</p>`
+          );
+        }
+
+        return res.json({ success: true, result: { status: "SUCCESS", message: "Batch Picking completed successfully!" } });
       }
 
       case 'ocSubmitDirectOrder':
@@ -540,13 +1060,11 @@ app.post('/api/gas-bridge', async (req, res) => {
           const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), qty: Number(l.qty) || 0, desc: l.desc || '' })));
           const totalQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
 
-          // Insert into operation_sheet
           await query(
             'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalQty, 0, 'Without Allocation', 'Picking']
           );
 
-          // Insert into order_checker
           await query(
             'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalQty, 0, 'Without Allocation', 'Submitted (W/O Aloc)']
@@ -698,6 +1216,7 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'ocRemoveAllocation': {
         const orderNo = args[0] || '';
         await query('DELETE FROM phy_stk_allocation WHERE order_no = ?', [orderNo]);
+        await query('DELETE FROM sap_stk_allocation WHERE so_no = ?', [orderNo]);
         return res.json({ success: true, result: { status: "SUCCESS", message: `Allocation reset for ${orderNo}` } });
       }
 
@@ -707,6 +1226,7 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'opGetSheetData':
       case 'getPickingOrders':
       case 'getOutboundOrders': {
+        await opRepairAllocationRemarksSQL();
         const warehouse = args[0] || 'BB04';
         const headers = [
           "Plant", "Distribution Channel", "Sales Document", "Order Date", "Customer Name",
@@ -757,6 +1277,43 @@ app.post('/api/gas-bridge', async (req, res) => {
         });
       }
 
+      case 'opFetchOutboundPgiOrders': {
+        await opRepairAllocationRemarksSQL();
+        const warehouse = args[0] || 'BB04';
+        const misRows = await query("SELECT * FROM outward_mis WHERE UPPER(TRIM(order_status)) = 'PGI DONE'");
+        const allocRows = await query('SELECT DISTINCT order_no FROM phy_stk_allocation');
+        const allocSoSet = new Set(allocRows.map(r => _norm(r.order_no)));
+
+        const orderMap = {};
+        misRows.forEach(r => {
+          const plant = _norm(r.plant);
+          if (warehouse !== 'ALL' && !_matchWh(plant, warehouse)) return;
+          const sDoc = (r.order_no || '').replace(/^'/, '').trim();
+          if (!sDoc) return;
+          const sNorm = _norm(sDoc);
+
+          if (!orderMap[sNorm]) {
+            orderMap[sNorm] = {
+              salesDocument: sDoc,
+              obd: r.obd || '-',
+              orderDate: r.order_date || '',
+              customerName: r.customer_name || '',
+              customerRefNo: r.cust_ref || '',
+              orderQty: Number(r.order_qty) || 0,
+              dispatchQty: Number(r.dispatch_qty || r.pgi_qty) || 0,
+              vehicleNumber: r.vehicle_no || '',
+              driverNumber: r.driver_no || '',
+              tptName: r.tpt_name || '',
+              status: "PGI Done",
+              plant: r.plant || "BB04",
+              isAllocated: allocSoSet.has(sNorm)
+            };
+          }
+        });
+
+        return res.json({ success: true, result: { status: "SUCCESS", orders: Object.values(orderMap) } });
+      }
+
       case 'opPreviewOutboundPickList': {
         const warehouse = args[0] || 'BB04';
         const selectedSoNumbers = Array.isArray(args[1]) ? args[1] : [args[1]];
@@ -776,33 +1333,95 @@ app.post('/api/gas-bridge', async (req, res) => {
         });
       }
 
+      case 'opConfirmOutboundPickList': {
+        const warehouse = args[0] || 'BB04';
+        const selectedSoNumbers = Array.isArray(args[1]) ? args[1] : [args[1]];
+        const username = args[2] || 'admin';
+
+        for (const soNo of selectedSoNumbers) {
+          await query("UPDATE operation_sheet SET status = 'Picking' WHERE order_no = ?", [soNo]);
+          await query("UPDATE outward_mis SET order_status = 'Picking' WHERE order_no = ?", [soNo]);
+        }
+        await opRepairAllocationRemarksSQL();
+
+        return res.json({
+          success: true,
+          result: { status: "SUCCESS", message: "Allocations booked and order status updated to Picking." }
+        });
+      }
+
+      case 'opFetchOutboundPickingOrders': {
+        await opRepairAllocationRemarksSQL();
+        const warehouse = args[0] || 'BB04';
+        const orders = await query("SELECT * FROM operation_sheet WHERE UPPER(TRIM(status)) = 'PICKING'");
+        const resultOrders = orders.filter(r => _matchWh(r.plant, warehouse)).map(r => ({
+          salesDocument: r.order_no,
+          obd: r.obd || '-',
+          orderDate: r.order_date || '',
+          customerName: r.customer_name || '',
+          customerRefNo: r.cust_ref || '',
+          orderQty: Number(r.ordered_qty) || 0,
+          dispatchQty: Number(r.dispatch_qty) || 0,
+          vehicleNumber: r.vehicle_no || '',
+          driverNumber: r.driver_no || '',
+          tptName: r.tpt_name || '',
+          shortageReason: r.shortage_reason || '',
+          loadingSupervisor: r.loading_supervisor || '',
+          billingSupervisor: r.billing_supervisor || '',
+          shift: r.shift || '',
+          loadingDate: r.loading_date || '',
+          contractorName: r.contractor_name || '',
+          loadingStartTime: r.loading_start_time || '',
+          loadingEndTime: r.loading_end_time || '',
+          status: 'Picking',
+          plant: r.plant || 'BB04'
+        }));
+
+        return res.json({ success: true, result: { status: "SUCCESS", orders: resultOrders } });
+      }
+
+      case 'opGetAllocatedStockForOrder': {
+        const soNumber = _norm(args[0] || '');
+        const allocs = await query('SELECT * FROM phy_stk_allocation WHERE order_no = ?', [soNumber]);
+        return res.json({ success: true, result: { status: "SUCCESS", allocations: allocs } });
+      }
+
       case 'confirmOutbound':
       case 'saveOutboundConfirmation':
-      case 'opConfirmOutboundDeductStock':
-      case 'opConfirmOutboundPickList': {
+      case 'opConfirmOutboundDeductStock': {
         const payload = args[0] || {};
-        const orderNo = payload.orderNo || args[1] || '';
+        const orderNo = payload.soNumber || payload.orderNo || args[1] || '';
 
         await query(`
           UPDATE operation_sheet SET 
             status = 'Confirmed', vehicle_no = ?, driver_no = ?, tpt_name = ?, tpt_gst = ?,
-            loading_supervisor = ?, billing_supervisor = ?, shift = ?, loading_date = ?, contractor_name = ?
+            shortage_reason = ?, loading_supervisor = ?, billing_supervisor = ?, shift = ?,
+            loading_date = ?, contractor_name = ?, loading_start_time = ?, loading_end_time = ?, dispatch_qty = ?
           WHERE order_no = ?
         `, [
-          payload.vehicleNo || '', payload.driverNo || '', payload.tptName || '', payload.tptGst || '',
-          payload.loadingSupervisor || '', payload.billingSupervisor || 'Anish Shakya', payload.shift || 'Day Shift', payload.loadingDate || new Date().toISOString().split('T')[0],
-          payload.contractorName || '', orderNo
+          payload.vehicleNumber || payload.vehicleNo || '', payload.driverNumber || payload.driverNo || '', payload.tptName || '', payload.tptGst || '',
+          payload.shortageReason || '', payload.loadingSupervisor || '', payload.billingSupervisor || 'Anish Shakya', payload.shift || 'Day Shift',
+          payload.loadingDate || new Date().toISOString().split('T')[0], payload.contractorName || '', payload.loadingStartTime || '', payload.loadingEndTime || '',
+          payload.totalDispatchQty || 0, orderNo
         ]);
 
-        if (payload.allocationsToDeduct) {
-          for (const item of payload.allocationsToDeduct) {
-            await query('UPDATE phy_stk_entry SET available_qty = available_qty - ? WHERE bin_no = ? AND sku_code = ?', [item.deductQty, item.binNo, item.skuCode]);
+        if (payload.items) {
+          for (const item of payload.items) {
+            const deductQty = Number(item.allocatedQty) || 0;
+            if (deductQty <= 0) continue;
+
+            await query('UPDATE phy_stk_entry SET available_qty = available_qty - ? WHERE bin_no = ? AND sku_code = ?', [deductQty, item.bin, item.sku]);
             await query('DELETE FROM phy_stk_entry WHERE available_qty <= 0');
+
+            await query(
+              'INSERT INTO bin_txin (warehouse, from_bin, sku_code, transfer_qty, batch, tx_type, doc_no, performed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+              [payload.warehouse || 'BB04', item.bin, item.sku, deductQty, item.mfgMonth || '', 'OUTBOUND DEDUCT', orderNo, payload.updatedBy || 'admin']
+            );
           }
         }
         await query('DELETE FROM phy_stk_allocation WHERE order_no = ?', [orderNo]);
 
-        return res.json({ success: true, result: { status: "SUCCESS", message: "Confirmed Outbound & Deducted Stock in SQL Database!" } });
+        return res.json({ success: true, result: { status: "SUCCESS", message: `Order ${orderNo} confirmed successfully.` } });
       }
 
       case 'ocDispatchOrder':
@@ -821,6 +1440,35 @@ app.post('/api/gas-bridge', async (req, res) => {
         return res.json({ success: true, result: { status: "SUCCESS", message: `Order ${soNumber} dispatched!` } });
       }
 
+      case 'opUploadTransportationUpdate': {
+        const warehouse = args[0] || 'BB04';
+        const dataArray = args[1] || [];
+        if (!dataArray || dataArray.length < 2) {
+          return res.json({ success: true, result: { status: "ERROR", message: "No data provided." } });
+        }
+
+        const headers = dataArray[0].map(h => _norm(h));
+        const sDocIdx = fc(headers, ["SALES DOCUMENT", "ORDER NO"]);
+        const vehIdx = fc(headers, ["VEHICLE NUMBER", "VEHICLE NO"]);
+        const drIdx = fc(headers, ["DRIVER NUMBER", "DRIVER CONTACT"]);
+        const tptIdx = fc(headers, ["TPT NAME", "TRANSPORTER"]);
+
+        let updated = 0;
+        for (let i = 1; i < dataArray.length; i++) {
+          const row = dataArray[i];
+          const sDoc = _norm(row[sDocIdx]);
+          if (!sDoc) continue;
+
+          await query(
+            'UPDATE operation_sheet SET vehicle_no = ?, driver_no = ?, tpt_name = ? WHERE order_no = ?',
+            [row[vehIdx] || '', row[drIdx] || '', row[tptIdx] || '', sDoc]
+          );
+          updated++;
+        }
+
+        return res.json({ success: true, result: { status: "OK", updated: updated } });
+      }
+
       case 'opDeleteRow': {
         const orderNo = args[0] || '';
         await query('DELETE FROM operation_sheet WHERE order_no = ?', [orderNo]);
@@ -830,10 +1478,52 @@ app.post('/api/gas-bridge', async (req, res) => {
       case 'opSaveRowEdits': {
         const warehouse = args[0] || 'BB04';
         const edits = args[1] || [];
+        let updated = 0;
+
         for (const edit of edits) {
-          await query('UPDATE operation_sheet SET vehicle_no = ?, driver_no = ?, tpt_name = ? WHERE order_no = ?', [edit.vehicle_no || '', edit.driver_no || '', edit.tpt_name || '', edit.order_no]);
+          if (!edit || !edit.order_no && !edit.fieldName) continue;
+          const orderNo = edit.order_no || edit.salesDocument;
+          const field = (edit.fieldName || edit.field || '').toUpperCase();
+          const val = edit.value !== undefined ? edit.value : edit.val;
+
+          if (orderNo) {
+            // Map header field name to column name
+            const colMap = {
+              "PLANT": "plant",
+              "DISTRIBUTION CHANNEL": "dist_channel",
+              "SALES DOCUMENT": "order_no",
+              "ORDER DATE": "order_date",
+              "CUSTOMER NAME": "customer_name",
+              "CUSTOMER REF NO": "cust_ref",
+              "ORDER QTY": "ordered_qty",
+              "SHORTAGE QTY": "shortage_qty",
+              "ALLOCATION REMARK": "alloc_remark",
+              "SHORTAGE REMARK": "shortage_remark",
+              "OBD": "obd",
+              "ORDER STATUS": "status",
+              "VEHICLE NUMBER": "vehicle_no",
+              "DRIVER NUMBER": "driver_no",
+              "TPT NAME": "tpt_name",
+              "DISPATCH QTY": "dispatch_qty",
+              "SHORTAGE REASON": "shortage_reason",
+              "LOADING SUPERVISOR": "loading_supervisor",
+              "BILLING SUPERVISOR": "billing_supervisor",
+              "SHIFT": "shift",
+              "LOADING DATE": "loading_date",
+              "CONTRACTOR NAME": "contractor_name",
+              "LOADING START TIME": "loading_start_time",
+              "LOADING END TIME": "loading_end_time"
+            };
+
+            const sqlCol = colMap[field];
+            if (sqlCol) {
+              await query(`UPDATE operation_sheet SET ${sqlCol} = ? WHERE order_no = ?`, [val, orderNo]);
+              updated++;
+            }
+          }
         }
-        return res.json({ success: true, result: { status: "SUCCESS", message: "Edits saved!" } });
+
+        return res.json({ success: true, result: { status: "SUCCESS", updatedCount: updated } });
       }
 
       // -------------------------------------------------------------
@@ -932,8 +1622,8 @@ app.post('/api/gas-bridge', async (req, res) => {
           await query('UPDATE phy_stk_entry SET available_qty = available_qty + ? WHERE id = ?', [qty, existing[0].id]);
         } else {
           await query(
-            'INSERT INTO phy_stk_entry (bin_no, sku_code, product_name, available_qty, mfg_month) VALUES (?, ?, ?, ?, ?)',
-            [bin, sku, item.productName || sku, qty, item.mfgMonth || '']
+            'INSERT INTO phy_stk_entry (bin_no, sku_code, product_name, available_qty, mfg_month, plant) VALUES (?, ?, ?, ?, ?, ?)',
+            [bin, sku, item.productName || sku, qty, item.mfgMonth || '', item.plant || 'BB04']
           );
         }
         return res.json({ success: true, result: { status: "SUCCESS" } });
@@ -950,8 +1640,18 @@ app.post('/api/gas-bridge', async (req, res) => {
 
       case 'opGetBinSuggestionsForSku': {
         const sku = _norm(args[0]);
-        const bins = await query('SELECT bin_no, available_qty, mfg_month FROM phy_stk_entry WHERE sku_code = ? AND available_qty > 0 ORDER BY updated_at ASC', [sku]);
-        return res.json({ success: true, result: bins });
+        const warehouse = args[1] || 'BB04';
+        const bins = await query('SELECT bin_no, available_qty, mfg_month, product_name, plant FROM phy_stk_entry WHERE sku_code = ? AND available_qty > 0 ORDER BY updated_at ASC', [sku]);
+        const suggestions = bins.filter(b => _matchWh(b.plant, warehouse)).map(b => ({
+          mfgMonth: b.mfg_month || 'NA',
+          bin: b.bin_no,
+          sku: sku,
+          productName: b.product_name || sku,
+          availQty: Number(b.available_qty) || 0,
+          plant: b.plant || 'BB04'
+        }));
+
+        return res.json({ success: true, result: { status: "SUCCESS", suggestions: suggestions } });
       }
 
       // -------------------------------------------------------------
