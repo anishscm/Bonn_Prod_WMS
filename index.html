@@ -4652,7 +4652,11 @@ function uploadDump(){
 }
 
 /* SO NUMBER VALIDATION */
-function isValidSO(v){return/^\d{6,}$/.test(v.trim());}
+function isValidSO(v){
+  if (!v) return false;
+  var str = v.toString().trim().replace(/\.0+$/, '');
+  return str.length >= 1;
+}
 function validateSOField(id){
   var el=document.getElementById("sso_"+id);
   var hint=document.getElementById("sohint_"+id);

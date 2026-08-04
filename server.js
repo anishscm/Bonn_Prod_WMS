@@ -1038,20 +1038,17 @@ app.post('/api/gas-bridge', async (req, res) => {
 
         for (const payload of ordersPayload) {
           if (!payload) continue;
-          const soNum = _norm(payload.soNumber || payload.orderNo || '');
-          if (!soNum || !/^\d{6,}$/.test(soNum)) {
+          let soNum = _norm(payload.soNumber || payload.orderNo || '').replace(/\.0+$/, '');
+          if (!soNum) {
             results[payload.soNumber || '?'] = { status: "INVALID_SO" };
             continue;
           }
+          payload.soNumber = soNum;
 
-          const isUpdate = existingSet.has(soNum);
-          if (isUpdate) {
-            await query('DELETE FROM partial_clear_orders WHERE so_no = ?', [soNum]);
-            await query('DELETE FROM shortage_partial WHERE so_no = ?', [soNum]);
-            await query('DELETE FROM operation_sheet WHERE order_no = ?', [soNum]);
-          } else {
-            existingSet.add(soNum);
-          }
+          await query('DELETE FROM partial_clear_orders WHERE UPPER(so_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM shortage_partial WHERE UPPER(so_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM operation_sheet WHERE UPPER(order_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM order_checker WHERE UPPER(order_no) = UPPER(?)', [soNum]);
 
           const customerName = payload.partyName || payload.customerName || '';
           const custRef = payload.destCity || payload.custRef || '';
@@ -1094,7 +1091,7 @@ app.post('/api/gas-bridge', async (req, res) => {
         const tsStr = new Date().toISOString();
 
         // 1. Build SAP Stock Map from sap_stk_dump
-        const dumpRows = await query('SELECT * FROM sap_stk_dump WHERE UPPER(warehouse) = UPPER(?) OR warehouse = "ALL"', [warehouse]);
+        const dumpRows = await query("SELECT * FROM sap_stk_dump WHERE UPPER(warehouse) = UPPER(?) OR UPPER(warehouse) = 'ALL'", [warehouse]);
         const rawStock = {};
         for (const r of dumpRows) {
           const sku = _norm(r.material_code);
@@ -1129,11 +1126,12 @@ app.post('/api/gas-bridge', async (req, res) => {
         const validOrders = [];
         for (const payload of ordersPayload) {
           if (!payload) continue;
-          const soNum = _norm(payload.soNumber || payload.orderNo || '');
-          if (!soNum || !/^\d{6,}$/.test(soNum)) {
+          let soNum = _norm(payload.soNumber || payload.orderNo || '').replace(/\.0+$/, '');
+          if (!soNum) {
             results[payload.soNumber || '?'] = { status: "INVALID_SO" };
             continue;
           }
+          payload.soNumber = soNum;
           validOrders.push(payload);
         }
 
@@ -1145,23 +1143,15 @@ app.post('/api/gas-bridge', async (req, res) => {
           return String(a.soNumber || '').localeCompare(String(b.soNumber || ''));
         });
 
-        // 6. Existing SO Lookup
-        const existingRows = await query('SELECT order_no FROM operation_sheet');
-        const existingSet = new Set(existingRows.map(r => _norm(r.order_no)));
-
-        // Clean up previous records if order is being re-submitted / updated
+        // 6. Existing SO Cleanup
         for (const order of validOrders) {
           const soNum = _norm(order.soNumber || order.orderNo);
-          if (existingSet.has(soNum)) {
-            await query('DELETE FROM sap_stk_allocation WHERE so_no = ?', [soNum]);
-            await query('DELETE FROM partial_clear_orders WHERE so_no = ?', [soNum]);
-            await query('DELETE FROM shortage_partial WHERE so_no = ?', [soNum]);
-            await query('DELETE FROM clear_order WHERE so_no = ?', [soNum]);
-            await query('DELETE FROM operation_sheet WHERE order_no = ?', [soNum]);
-            await query('DELETE FROM order_checker WHERE order_no = ?', [soNum]);
-          } else {
-            existingSet.add(soNum);
-          }
+          await query('DELETE FROM sap_stk_allocation WHERE UPPER(so_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM partial_clear_orders WHERE UPPER(so_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM shortage_partial WHERE UPPER(so_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM clear_order WHERE UPPER(so_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM operation_sheet WHERE UPPER(order_no) = UPPER(?)', [soNum]);
+          await query('DELETE FROM order_checker WHERE UPPER(order_no) = UPPER(?)', [soNum]);
         }
 
         const processedClear = new Set();
