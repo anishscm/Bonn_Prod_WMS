@@ -1316,7 +1316,7 @@ app.post('/api/gas-bridge', async (req, res) => {
           await query('DELETE FROM shortage_partial WHERE UPPER(so_no) = UPPER(?)', [soNum]);
           await query('DELETE FROM operation_sheet WHERE UPPER(order_no) = UPPER(?)', [soNum]);
           await query('DELETE FROM order_checker WHERE UPPER(order_no) = UPPER(?)', [soNum]);
-
+          
           const customerName = payload.partyName || payload.customerName || '';
           const custRef = payload.destCity || payload.custRef || '';
           const orderDate = payload.soDate || payload.orderDate || new Date().toISOString().split('T')[0];
@@ -1325,17 +1325,38 @@ app.post('/api/gas-bridge', async (req, res) => {
           const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), qty: Number(l.qty) || 0, desc: l.desc || '' })));
           const totalQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
 
+          const rawStock = await _buildRawStockMapSQL(warehouse);
+          const shortRemarks = [];
+          let shortageQty = 0;
+          lines.forEach(line => {
+            const sku = _norm(line.sku);
+            const reqQty = Number(line.qty) || 0;
+            if (!sku || reqQty <= 0) return;
+            const st = rawStock[sku] || { sap: 0, transit: 0 };
+            const avail = (Number(st.sap) || 0) + (Number(st.transit) || 0);
+            const sh = Math.max(0, reqQty - avail);
+            if (sh > 0) {
+              shortRemarks.push(`${sku}(${sh})`);
+              shortageQty += sh;
+            }
+          });
+
+          const isBlocked = !!(payload.billingBlock || '').toString().trim();
+          const allocRemark = isBlocked ? "Without Allocation (Block)" : "Without Allocation";
+          const shortageRemark = isBlocked ? "" : shortRemarks.join(", ");
+          if (isBlocked) shortageQty = 0;
+
           await query(
-            'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalQty, 0, 'Without Allocation', 'Picking']
+            'INSERT INTO operation_sheet (plant, order_no, order_date, customer_name, cust_ref, sku_code, ordered_qty, shortage_qty, alloc_remark, shortage_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalQty, shortageQty, allocRemark, shortageRemark, 'Picking']
           );
 
           await query(
-            'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalQty, 0, 'Without Allocation', 'Submitted (W/O Aloc)']
+            'INSERT INTO order_checker (order_no, doc_date, customer_name, cust_ref, lines_json, plant, total_order_qty, shortage_qty, alloc_remark, shortage_remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalQty, shortageQty, allocRemark, shortageRemark, allocRemark]
           );
 
-          results[soNum] = { status: "DONE", isUpdate: isUpdate, clearLines: lines.length, shortLines: 0 };
+          results[soNum] = { status: "DONE", isUpdate: false, clearLines: lines.length, shortLines: 0 };
           insertedCount++;
         }
 
@@ -1477,8 +1498,8 @@ app.post('/api/gas-bridge', async (req, res) => {
 
             const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), desc: l.desc || '', qty: Number(l.qty) || 0 })));
             clearBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]);
-            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Picking']);
-            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Full Allocation (Inhand)', 'Full Allocation (Inhand)']);
+            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Full Allocation (Inhand)', '', 'Picking']);
+            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Full Allocation (Inhand)', '', 'Full Allocation (Inhand)']);
 
             results[soNum] = { status: "DONE", isUpdate: true, clearLines: lines.length, shortLines: 0 };
             insertedCount++;
@@ -1529,6 +1550,7 @@ app.post('/api/gas-bridge', async (req, res) => {
             let totalOrderQty = 0;
             let totalTransitQty = 0;
             const skuInhUsed = {};
+            const transitRemarks = [];
 
             for (const line of lines) {
               const sku = _norm(line.sku);
@@ -1545,15 +1567,17 @@ app.post('/api/gas-bridge', async (req, res) => {
 
               if (lineFromTrn > 0) {
                 totalTransitQty += lineFromTrn;
+                transitRemarks.push(`${sku}(${lineFromTrn})`);
                 const statusBT = lineFromInh === 0 ? "NO STOCK" : "SHORT";
                 shortageBatch.push([warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, lineFromInh, lineFromTrn, statusBT, lineFromTrn, 0, 'OK', tsStr, userId]);
               }
             }
 
             const linesJSON = JSON.stringify(lines.map(l => ({ sku: _norm(l.sku), desc: l.desc || '', qty: Number(l.qty) || 0 })));
+            const shortageRemark = transitRemarks.join(", ");
             partialBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, linesJSON, userId]);
-            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Picking']);
-            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', 'Full Allocation (Transit)']);
+            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', shortageRemark, 'Picking']);
+            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, totalTransitQty, 'Full Allocation (Transit)', shortageRemark, 'Full Allocation (Transit)']);
 
             results[soNum] = { status: "PARTIAL", isUpdate: true, clearLines: lines.length, shortLines: 0 };
             insertedCount++;
@@ -1574,8 +1598,8 @@ app.post('/api/gas-bridge', async (req, res) => {
 
           if (isBlocked) {
             const totalOrderQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
-            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Without Allocation (Block)', 'Picking']);
-            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Without Allocation (Block)', 'Without Allocation (Block)']);
+            opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, 0, 'Without Allocation (Block)', '', 'Picking']);
+            checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, 0, 'Without Allocation (Block)', '', 'Without Allocation (Block)']);
             results[soNum] = { status: "DONE", isUpdate: true, clearLines: lines.length, shortLines: 0 };
             insertedCount++;
             continue;
@@ -1583,6 +1607,7 @@ app.post('/api/gas-bridge', async (req, res) => {
 
           const clearLines = [];
           const shortLines = [];
+          const shortRemarks = [];
           let totalOrderQty = 0;
           let totalTransitQty = 0;
           let totalShortQty = 0;
@@ -1615,6 +1640,8 @@ app.post('/api/gas-bridge', async (req, res) => {
             if (trnUsed > 0) totalTransitQty += trnUsed;
 
             if (shortAT > 0 || shortBT > 0) {
+              const sQty = shortAT > 0 ? shortAT : shortBT;
+              shortRemarks.push(`${sku}(${sQty})`);
               totalShortQty += shortAT;
               shortLines.push({ sku: sku, reqQty: reqQty, shortAT: shortAT });
               shortageBatch.push([warehouse, soNum, customerName, orderDate, sku, line.desc || '', reqQty, inhAlloc, shortBT, statusBT, trnUsed, shortAT, statusAT, tsStr, userId]);
@@ -1624,6 +1651,7 @@ app.post('/api/gas-bridge', async (req, res) => {
           const isPartial = shortLines.length > 0;
           const allocRemark = isPartial ? "Partial Allocation" : (totalTransitQty > 0 ? "Full Allocation (Transit)" : "Full Allocation (Inhand)");
           const finalShortage = isPartial ? totalShortQty : totalTransitQty;
+          const shortageRemark = shortRemarks.join(", ");
 
           if (!isPartial) {
             clearBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, lines.length, linesJSON, userId]);
@@ -1632,8 +1660,8 @@ app.post('/api/gas-bridge', async (req, res) => {
             partialBatch.push([warehouse, soNum, orderDate, customerName, custRef, tsStr, clearJSON, userId]);
           }
 
-          opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, finalShortage, allocRemark, 'Picking']);
-          checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, finalShortage, allocRemark, allocRemark]);
+          opSheetBatch.push([warehouse, soNum, orderDate, customerName, custRef, linesJSON, totalOrderQty, finalShortage, allocRemark, shortageRemark, 'Picking']);
+          checkerBatch.push([soNum, orderDate, customerName, custRef, linesJSON, warehouse, totalOrderQty, finalShortage, allocRemark, shortageRemark, allocRemark]);
 
           results[soNum] = {
             status: isPartial ? "PARTIAL" : "DONE",
@@ -1649,8 +1677,8 @@ app.post('/api/gas-bridge', async (req, res) => {
         await batchInsert('clear_order', ['warehouse', 'so_no', 'so_date', 'party_name', 'reference', 'submit_time', 'total_lines', 'lines_json', 'updated_by'], clearBatch);
         await batchInsert('partial_clear_orders', ['warehouse', 'so_no', 'so_date', 'party_name', 'reference', 'submit_time', 'clear_lines_json', 'updated_by'], partialBatch);
         await batchInsert('shortage_partial', ['warehouse', 'so_no', 'party_name', 'so_date', 'sku_code', 'description', 'req_qty', 'avail_inhand', 'short_bt', 'status_bt', 'transit_used', 'short_at', 'status_at', 'submit_time', 'updated_by'], shortageBatch);
-        await batchInsert('operation_sheet', ['plant', 'order_no', 'order_date', 'customer_name', 'cust_ref', 'sku_code', 'ordered_qty', 'shortage_qty', 'alloc_remark', 'status'], opSheetBatch);
-        await batchInsert('order_checker', ['order_no', 'doc_date', 'customer_name', 'cust_ref', 'lines_json', 'plant', 'total_order_qty', 'shortage_qty', 'alloc_remark', 'status'], checkerBatch);
+        await batchInsert('operation_sheet', ['plant', 'order_no', 'order_date', 'customer_name', 'cust_ref', 'sku_code', 'ordered_qty', 'shortage_qty', 'alloc_remark', 'shortage_remark', 'status'], opSheetBatch);
+        await batchInsert('order_checker', ['order_no', 'doc_date', 'customer_name', 'cust_ref', 'lines_json', 'plant', 'total_order_qty', 'shortage_qty', 'alloc_remark', 'shortage_remark', 'status'], checkerBatch);
 
         return res.json({
           success: true,
