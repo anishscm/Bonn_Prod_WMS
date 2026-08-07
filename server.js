@@ -2183,11 +2183,738 @@ app.post('/api/gas-bridge', async (req, res) => {
       }
 
       // -------------------------------------------------------------
+      // ACTIVITY LOG
+      // -------------------------------------------------------------
+      case 'logUserActivity': {
+        const [username, action, details, ipAddr] = args;
+        const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+        try {
+          await query('INSERT INTO activity_log (timestamp, user_id, action, details, ip_address) VALUES (?, ?, ?, ?, ?)',
+            [ts, username || 'admin', action || '', details || '', ipAddr || '127.0.0.1']);
+        } catch(e) { /* silent */ }
+        return res.json({ success: true, result: { status: 'SUCCESS' } });
+      }
+
+      case 'getAuditActivityLogs': {
+        const [uFilter, aFilter] = args;
+        let sql = 'SELECT * FROM activity_log';
+        const params = [];
+        if (uFilter) { sql += ' WHERE UPPER(user_id) = ?'; params.push(_norm(uFilter)); }
+        sql += ' ORDER BY id DESC LIMIT 300';
+        const rows = await query(sql, params);
+        const logs = rows.filter(r => {
+          if (aFilter && _norm(r.action).indexOf(_norm(aFilter)) === -1) return false;
+          return true;
+        }).map(r => ({ ts: r.timestamp, user: r.user_id, action: r.action, details: r.details, ip: r.ip_address }));
+        return res.json({ success: true, result: { status: 'SUCCESS', logs } });
+      }
+
+      // -------------------------------------------------------------
+      // SETUP MASTERS: BIN MASTER CRUD
+      // -------------------------------------------------------------
+      case 'setupGetBinMaster': {
+        const warehouse = _norm(args[0] || 'BB04');
+        const rows = await query('SELECT * FROM bin_masters ORDER BY bin_code');
+        const bins = rows.filter(r => !warehouse || warehouse === 'ALL' || _matchWh(r.wh_code, warehouse))
+          .map(r => ({ code: r.bin_code, zone: r.zone || '', type: r.type || '', capacity: r.max_capacity || 1000, status: r.status || 'Active', warehouse: r.wh_code || warehouse }));
+        return res.json({ success: true, result: { status: 'SUCCESS', bins } });
+      }
+
+      case 'setupSaveBinMaster': {
+        const [warehouse, binObj, user] = args;
+        const code = _norm(binObj.code || '');
+        if (!code) return res.json({ success: true, result: { status: 'ERROR', message: 'Bin Code is required.' } });
+        const existing = await query('SELECT id FROM bin_masters WHERE bin_code = ?', [code]);
+        if (existing.length > 0) {
+          await query('UPDATE bin_masters SET zone=?, type=?, max_capacity=?, status=?, wh_code=? WHERE bin_code=?',
+            [binObj.zone || 'FAST', binObj.type || 'PALLET', binObj.capacity || 1000, binObj.status || 'Active', warehouse || 'BB04', code]);
+        } else {
+          await query('INSERT INTO bin_masters (bin_code, wh_code, zone, type, max_capacity, status) VALUES (?,?,?,?,?,?)',
+            [code, warehouse || 'BB04', binObj.zone || 'FAST', binObj.type || 'PALLET', binObj.capacity || 1000, binObj.status || 'Active']);
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `Bin ${code} saved successfully!` } });
+      }
+
+      case 'setupDeleteBinMaster': {
+        const [binCode, user] = args;
+        const code = _norm(binCode || '');
+        if (!code) return res.json({ success: true, result: { status: 'ERROR', message: 'Bin Code required.' } });
+        await query('DELETE FROM bin_masters WHERE bin_code = ?', [code]);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `Bin ${code} deleted.` } });
+      }
+
+      // -------------------------------------------------------------
+      // SETUP MASTERS: SKU MASTER CRUD
+      // -------------------------------------------------------------
+      case 'setupGetSkuMaster': {
+        const rows = await query('SELECT * FROM sku_masters ORDER BY sku_code');
+        const skus = rows.map(r => ({ code: r.sku_code, desc: r.sku_name || r.description || '', uom: r.uom || 'BOX', category: r.category || 'FINISHED GOODS', shelfLife: '12 Months' }));
+        return res.json({ success: true, result: { status: 'SUCCESS', skus } });
+      }
+
+      case 'setupSaveSkuMaster': {
+        const [skuObj, user] = args;
+        const code = _norm(skuObj.code || '');
+        if (!code) return res.json({ success: true, result: { status: 'ERROR', message: 'SKU Code is required.' } });
+        await query('INSERT INTO sku_masters (sku_code, sku_name, description, uom, category) VALUES (?,?,?,?,?) ON CONFLICT (sku_code) DO UPDATE SET sku_name=EXCLUDED.sku_name, description=EXCLUDED.description, uom=EXCLUDED.uom, category=EXCLUDED.category',
+          [code, skuObj.desc || '', skuObj.desc || '', skuObj.uom || 'BOX', skuObj.category || 'FINISHED GOODS']);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `SKU ${code} saved successfully!` } });
+      }
+
+      case 'setupDeleteSkuMaster': {
+        const [skuCode, user] = args;
+        const code = _norm(skuCode || '');
+        await query('DELETE FROM sku_masters WHERE sku_code = ?', [code]);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `SKU ${code} deleted.` } });
+      }
+
+      // -------------------------------------------------------------
+      // SETUP MASTERS: PARTY MASTER CRUD
+      // -------------------------------------------------------------
+      case 'setupGetPartyMaster': {
+        const rows = await query('SELECT * FROM party_master ORDER BY id');
+        const parties = rows.map(r => ({ rowIndex: r.id, contractor: r.contractor_name || '', supervisor: r.supervisor_name || '', transporter: r.tpt_name || '', gst: r.tpt_gst || '' }));
+        return res.json({ success: true, result: { status: 'SUCCESS', parties } });
+      }
+
+      case 'setupSavePartyMaster': {
+        const [partyObj, user] = args;
+        if (partyObj.rowIndex && Number(partyObj.rowIndex) > 0) {
+          await query('UPDATE party_master SET contractor_name=?, supervisor_name=?, tpt_name=?, tpt_gst=? WHERE id=?',
+            [partyObj.contractor || '', partyObj.supervisor || '', partyObj.transporter || '', partyObj.gst || '', Number(partyObj.rowIndex)]);
+        } else {
+          await query('INSERT INTO party_master (contractor_name, supervisor_name, tpt_name, tpt_gst) VALUES (?,?,?,?)',
+            [partyObj.contractor || '', partyObj.supervisor || '', partyObj.transporter || '', partyObj.gst || '']);
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', message: 'Party record saved successfully!' } });
+      }
+
+      case 'setupDeletePartyMaster': {
+        const [rowIndex, user] = args;
+        await query('DELETE FROM party_master WHERE id = ?', [Number(rowIndex)]);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: 'Party record deleted.' } });
+      }
+
+      // -------------------------------------------------------------
+      // SETUP MASTERS: MAIL ID MASTER CRUD
+      // -------------------------------------------------------------
+      case 'setupGetMailMaster': {
+        const rows = await query('SELECT * FROM mail_masters ORDER BY id');
+        const mails = rows.map(r => ({ rowIndex: r.id, mailId: r.email || '', shortExcess: r.short_excess_mail || 'OFF', remarkTrail: r.remark_trail_mail || 'OFF', cciMail: r.cci_mail || 'OFF' }));
+        return res.json({ success: true, result: { status: 'SUCCESS', mails } });
+      }
+
+      case 'setupSaveMailMaster': {
+        const [mailObj, user] = args;
+        const mailNorm = (mailObj.mailId || '').trim().toLowerCase();
+        if (!mailNorm || !mailNorm.includes('@')) return res.json({ success: true, result: { status: 'ERROR', message: 'Valid Email ID is required.' } });
+        const existing = await query('SELECT id FROM mail_masters WHERE LOWER(email) = ?', [mailNorm]);
+        if (existing.length > 0) {
+          await query('UPDATE mail_masters SET short_excess_mail=?, remark_trail_mail=?, cci_mail=? WHERE LOWER(email)=?',
+            [mailObj.shortExcess || 'OFF', mailObj.remarkTrail || 'OFF', mailObj.cciMail || 'OFF', mailNorm]);
+        } else {
+          await query('INSERT INTO mail_masters (module, email, warehouse, short_excess_mail, remark_trail_mail, cci_mail) VALUES (?,?,?,?,?,?)',
+            ['GENERAL', mailNorm, '*', mailObj.shortExcess || 'OFF', mailObj.remarkTrail || 'OFF', mailObj.cciMail || 'OFF']);
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `Email config for ${mailNorm} saved!` } });
+      }
+
+      case 'setupDeleteMailMaster': {
+        const [mailId, user] = args;
+        await query('DELETE FROM mail_masters WHERE LOWER(email) = ?', [(mailId || '').toLowerCase()]);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: 'Email removed from master.' } });
+      }
+
+      // -------------------------------------------------------------
+      // INVENTORY: MANUAL STOCK MANAGEMENT
+      // -------------------------------------------------------------
+      case 'invGetMasterDataForAddStock': {
+        const warehouse = _norm(args[0] || 'BB04');
+        const [binRows, skuRows, phyRows] = await Promise.all([
+          query('SELECT bin_code FROM bin_masters WHERE wh_code = ? ORDER BY bin_code', [warehouse]),
+          query('SELECT sku_code, sku_name FROM sku_masters ORDER BY sku_code'),
+          query('SELECT DISTINCT bin_no FROM phy_stk_entry WHERE plant = ? ORDER BY bin_no', [warehouse])
+        ]);
+        const binsSet = new Set([...binRows.map(r => r.bin_code), ...phyRows.map(r => r.bin_no)]);
+        const bins = Array.from(binsSet).filter(Boolean).sort();
+        const skus = skuRows.map(r => ({ code: r.sku_code, desc: r.sku_name || '' }));
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const yr = new Date().getFullYear();
+        const mfgOptions = [];
+        [yr-1, yr].forEach(y => { const y2 = String(y).slice(-2); months.forEach(m => mfgOptions.push(m+y2)); });
+        return res.json({ success: true, result: { status: 'SUCCESS', bins, skus, mfgOptions } });
+      }
+
+      case 'invManualAddStock': {
+        const [warehouse, bin, sku, description, qty, mfgMonth, username] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        const binUpper = (bin || '').trim().toUpperCase();
+        const skuUpper = (sku || '').trim().toUpperCase();
+        const numQty = Number(qty) || 0;
+        const mfg = (mfgMonth || '').replace(/^'/, '').trim();
+        if (!binUpper || !skuUpper || numQty <= 0 || !mfg) {
+          return res.json({ success: true, result: { status: 'ERROR', message: 'BIN, SKU, Qty and MFG Month are required.' } });
+        }
+        const desc = description || skuUpper;
+        const ts = new Date().toISOString();
+        const existing = await query('SELECT id, available_qty FROM phy_stk_entry WHERE UPPER(sku_code)=? AND UPPER(bin_no)=? AND UPPER(mfg_month)=? AND UPPER(plant)=?',
+          [skuUpper, binUpper, mfg.toUpperCase(), whNorm]);
+        if (existing.length > 0) {
+          const newQty = (Number(existing[0].available_qty) || 0) + numQty;
+          await query('UPDATE phy_stk_entry SET available_qty=?, computation_logic=?, updated_at=? WHERE id=?',
+            [newQty, String(Number(existing[0].available_qty)||0) + ' + ' + numQty, ts, existing[0].id]);
+        } else {
+          await query('INSERT INTO phy_stk_entry (mfg_month, bin_no, sku_code, product_name, available_qty, computation_logic, plant, updated_at) VALUES (?,?,?,?,?,?,?,?)',
+            [mfg, binUpper, skuUpper, desc, numQty, String(numQty), whNorm, ts]);
+        }
+        await query('INSERT INTO bin_txin (warehouse, timestamp, from_bin, sku_code, transfer_qty, batch, tx_type, doc_no, performed_by) VALUES (?,?,?,?,?,?,?,?,?)',
+          [whNorm, new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false}), binUpper, skuUpper, numQty, mfg, 'MANUAL_ADD', 'MANUAL_ADD', username || 'admin']);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `Added ${numQty} of ${skuUpper} to BIN ${binUpper}.` } });
+      }
+
+      case 'invGetBinStockDetails': {
+        const [warehouse, bin] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        const binUpper = (bin || '').trim().toUpperCase();
+        if (!binUpper) return res.json({ success: true, result: { status: 'ERROR', message: 'BIN is required.' } });
+        const rows = await query('SELECT id, mfg_month, bin_no, sku_code, product_name, available_qty, computation_logic, plant FROM phy_stk_entry WHERE UPPER(bin_no)=? AND UPPER(plant)=? AND available_qty>0 ORDER BY updated_at ASC',
+          [binUpper, whNorm]);
+        const items = rows.map((r, idx) => ({ rowIndex: r.id, mfg: r.mfg_month || 'NA', bin: r.bin_no, sku: r.sku_code, name: r.product_name || r.sku_code, qty: Number(r.available_qty)||0, logic: r.computation_logic||'', plant: r.plant||whNorm }));
+        return res.json({ success: true, result: { status: 'SUCCESS', bin: binUpper, items } });
+      }
+
+      case 'invManualAdjustStock': {
+        const [warehouse, bin, stockItems, username] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        if (!Array.isArray(stockItems)) return res.json({ success: true, result: { status: 'ERROR', message: 'Invalid stock items payload.' } });
+        const ts = new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false});
+        for (const item of stockItems) {
+          const rowId = Number(item.rowIndex);
+          const existing = await query('SELECT * FROM phy_stk_entry WHERE id=?', [rowId]);
+          if (!existing.length) continue;
+          const r = existing[0];
+          const oldQty = Number(r.available_qty) || 0;
+          const oldBin = r.bin_no; const oldSku = r.sku_code; const oldMfg = r.mfg_month;
+          if (item.action === 'DELETE') {
+            await query('UPDATE phy_stk_entry SET available_qty=0, computation_logic=? WHERE id=?', ['0', rowId]);
+            await query('INSERT INTO bin_txin (warehouse,timestamp,from_bin,sku_code,transfer_qty,batch,tx_type,doc_no,performed_by) VALUES (?,?,?,?,?,?,?,?,?)',
+              [whNorm, ts, oldBin, oldSku, -oldQty, oldMfg, 'MANUAL_LESS', 'MANUAL_CUT_SKU', username||'admin']);
+          } else if (item.action === 'UPDATE') {
+            const newQty = Math.max(0, Number(item.qty) || oldQty);
+            const newBin = (item.bin || oldBin).toUpperCase();
+            const newMfg = (item.mfg || oldMfg || '').replace(/^'/,'').trim();
+            const diff = newQty - oldQty;
+            await query('UPDATE phy_stk_entry SET available_qty=?, computation_logic=?, bin_no=?, mfg_month=?, updated_at=? WHERE id=?',
+              [newQty, String(newQty), newBin, newMfg, new Date().toISOString(), rowId]);
+            const txType = diff < 0 ? 'MANUAL_LESS' : 'MANUAL_EDIT';
+            await query('INSERT INTO bin_txin (warehouse,timestamp,from_bin,sku_code,transfer_qty,batch,tx_type,doc_no,performed_by) VALUES (?,?,?,?,?,?,?,?,?)',
+              [whNorm, ts, newBin, oldSku, diff, newMfg, txType, 'MANUAL_EDIT_STOCK', username||'admin']);
+          }
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `BIN ${bin} stock adjusted successfully.` } });
+      }
+
+      case 'invGetPhysicalStockOverview': {
+        const [warehouse, filters] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        const fBin = filters && filters.bin ? _norm(filters.bin) : '';
+        const fSku = filters && filters.sku ? _norm(filters.sku) : '';
+        const fMfg = filters && filters.mfg ? _norm(filters.mfg) : '';
+        const fDesc = filters && filters.desc ? (filters.desc||'').toLowerCase() : '';
+        const rows = await query('SELECT mfg_month, bin_no, sku_code, product_name, available_qty, plant FROM phy_stk_entry WHERE UPPER(plant)=? AND available_qty>0 ORDER BY sku_code', [whNorm]);
+        const filtered = rows.filter(r => {
+          if (fBin && !r.bin_no.toUpperCase().includes(fBin)) return false;
+          if (fSku && !r.sku_code.toUpperCase().includes(fSku)) return false;
+          if (fMfg && !(r.mfg_month||'').toUpperCase().includes(fMfg)) return false;
+          if (fDesc && !(r.product_name||'').toLowerCase().includes(fDesc)) return false;
+          return true;
+        }).map(r => ({ mfg: r.mfg_month||'NA', bin: r.bin_no, sku: r.sku_code, desc: r.product_name||r.sku_code, qty: Number(r.available_qty)||0, plant: r.plant||whNorm }));
+        return res.json({ success: true, result: { status: 'SUCCESS', totalRows: filtered.length, rows: filtered } });
+      }
+
+      case 'invGetPivotedStockData': {
+        const warehouse = _norm(args[0] || 'BB04');
+        const rows = await query('SELECT sku_code, product_name, mfg_month, SUM(available_qty) as qty FROM phy_stk_entry WHERE UPPER(plant)=? AND available_qty>0 GROUP BY sku_code, product_name, mfg_month', [warehouse]);
+        const mfgSet = new Set(); const skuMap = {};
+        rows.forEach(r => {
+          const mfg = r.mfg_month||'NA'; const sku = r.sku_code; const qty = Number(r.qty)||0;
+          if (qty <= 0) return;
+          mfgSet.add(mfg);
+          if (!skuMap[sku]) skuMap[sku] = { sku, desc: r.product_name||sku, totalQty: 0, mfgQuantities: {} };
+          skuMap[sku].totalQty += qty;
+          skuMap[sku].mfgQuantities[mfg] = (skuMap[sku].mfgQuantities[mfg]||0) + qty;
+        });
+        const mfgMonths = Array.from(mfgSet).sort();
+        const matrixRows = Object.values(skuMap).sort((a,b) => a.sku < b.sku ? -1 : 1);
+        return res.json({ success: true, result: { status: 'SUCCESS', mfgMonths, matrixRows } });
+      }
+
+      // -------------------------------------------------------------
+      // CCI (CYCLE COUNT INSTRUCTION) MODULE
+      // -------------------------------------------------------------
+      case 'invCreateCCI': {
+        const [warehouse, dateFromStr, dateToStr, username] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        const dFrom = dateFromStr ? new Date(dateFromStr).getTime() : null;
+        const dTo = dateToStr ? new Date(dateToStr).getTime() : null;
+        // Find bins touched in date range from bin_txin
+        const txRows = await query('SELECT DISTINCT from_bin FROM bin_txin WHERE UPPER(warehouse)=? ORDER BY from_bin', [whNorm]);
+        const touchedBinsSet = new Set();
+        txRows.forEach(r => { if (r.from_bin) touchedBinsSet.add(r.from_bin.toUpperCase()); });
+        // Get current stock in those bins
+        const phyRows = await query('SELECT mfg_month, bin_no, sku_code, product_name, available_qty FROM phy_stk_entry WHERE UPPER(plant)=? AND available_qty>0 ORDER BY bin_no, sku_code', [whNorm]);
+        const stockRows = phyRows.filter(r => touchedBinsSet.size === 0 || touchedBinsSet.has((r.bin_no||'').toUpperCase()))
+          .map(r => ({ bin: r.bin_no, sku: r.sku_code, desc: r.product_name||r.sku_code, qty: Number(r.available_qty)||0, mfg: r.mfg_month||'NA' }));
+        if (!stockRows.length) return res.json({ success: true, result: { status: 'ERROR', message: 'No active stock found in touched bins.' } });
+        const now = new Date();
+        const cciId = 'CCI-' + now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '-' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0') + String(now.getSeconds()).padStart(2,'0');
+        const ts = now.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false});
+        const cciRows = stockRows.map(row => [cciId, ts, dateFromStr||'-', dateToStr||'-', whNorm, row.bin, row.sku, row.desc, row.mfg, row.qty, null, null, null, null, 'CREATED', username||'admin', null, null]);
+        await batchInsert('cci', ['cci_id','created_at','date_from','date_to','warehouse','bin','sku_code','description','mfg_month','sys_qty','audited_mfg','audited_qty','variance_qty','remark','status','created_by','confirmed_by','confirmed_date'], cciRows);
+        return res.json({ success: true, result: { status: 'SUCCESS', cciId, totalBins: new Set(stockRows.map(r=>r.bin)).size, totalItems: stockRows.length, items: stockRows, message: `Cycle Count Instruction ${cciId} created with ${stockRows.length} item line(s).` } });
+      }
+
+      case 'invGetPendingCCI': {
+        const [warehouse, cciId] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        const rows = await query("SELECT * FROM cci WHERE UPPER(warehouse)=? AND status NOT IN ('CONFIRMED','COMPLETED') ORDER BY id", [whNorm]);
+        const cciMap = {};
+        rows.forEach(r => {
+          const id = r.cci_id;
+          if (!cciMap[id]) {
+            cciMap[id] = { cciId: id, creationDate: r.created_at, dateFrom: r.date_from, dateTo: r.date_to, plant: r.warehouse, status: r.status, createdBy: r.created_by, itemCount: 0, items: [] };
+          }
+          cciMap[id].itemCount++;
+          if (cciId && id === cciId) {
+            cciMap[id].items.push({ rowIndex: r.id, bin: r.bin, sku: r.sku_code, desc: r.description, mfg: r.mfg_month, sysQty: Number(r.sys_qty)||0, auditedMfg: r.audited_mfg||r.mfg_month, auditedQty: r.audited_qty !== null ? Number(r.audited_qty) : '', varianceQty: r.variance_qty !== null ? Number(r.variance_qty) : '', remark: r.remark||'', status: r.status });
+          }
+        });
+        const cciList = Object.values(cciMap);
+        return res.json({ success: true, result: { status: 'SUCCESS', cciList, cciId: cciId||null, items: cciId && cciMap[cciId] ? cciMap[cciId].items : [] } });
+      }
+
+      case 'invConfirmCCI': {
+        const [warehouse, cciId, auditedItems, username] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        if (!cciId || !Array.isArray(auditedItems) || !auditedItems.length) {
+          return res.json({ success: true, result: { status: 'ERROR', message: 'CCI ID and audited items required.' } });
+        }
+        const ts = new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:false});
+        const varianceSummary = [];
+        for (const item of auditedItems) {
+          const rowId = Number(item.rowIndex);
+          const existing = await query('SELECT * FROM cci WHERE id=?', [rowId]);
+          if (!existing.length) continue;
+          const r = existing[0];
+          const sysQty = Number(r.sys_qty)||0;
+          const audQty = (item.auditedQty !== '' && item.auditedQty !== null) ? Number(item.auditedQty) : sysQty;
+          const audMfg = (item.auditedMfg||r.mfg_month||'').replace(/^'/,'').trim();
+          const remark = item.remark || 'OK';
+          const variance = audQty - sysQty;
+          await query('UPDATE cci SET audited_mfg=?, audited_qty=?, variance_qty=?, remark=?, status=?, confirmed_by=?, confirmed_date=? WHERE id=?',
+            [audMfg, audQty, variance, remark, 'CONFIRMED', username||'admin', ts, rowId]);
+          // Apply variance to physical stock
+          if (variance !== 0) {
+            const phyEx = await query('SELECT id, available_qty FROM phy_stk_entry WHERE UPPER(sku_code)=? AND UPPER(bin_no)=? AND UPPER(plant)=?',
+              [(r.sku_code||'').toUpperCase(), (r.bin||'').toUpperCase(), whNorm]);
+            if (phyEx.length > 0) {
+              const newQty = Math.max(0, (Number(phyEx[0].available_qty)||0) + variance);
+              await query('UPDATE phy_stk_entry SET available_qty=?, updated_at=? WHERE id=?', [newQty, new Date().toISOString(), phyEx[0].id]);
+            } else if (variance > 0) {
+              await query('INSERT INTO phy_stk_entry (mfg_month,bin_no,sku_code,product_name,available_qty,computation_logic,plant,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+                [audMfg, (r.bin||'').toUpperCase(), (r.sku_code||'').toUpperCase(), r.description||'', variance, String(variance), whNorm, new Date().toISOString()]);
+            }
+            await query('INSERT INTO bin_txin (warehouse,timestamp,from_bin,sku_code,transfer_qty,batch,tx_type,doc_no,performed_by) VALUES (?,?,?,?,?,?,?,?,?)',
+              [whNorm, ts, r.bin||'', r.sku_code||'', variance, audMfg, 'CCI_ADJUST', cciId, username||'admin']);
+          }
+          varianceSummary.push({ bin: r.bin, sku: r.sku_code, desc: r.description, sysQty, audQty, variance, mfg: audMfg, remark });
+        }
+        // Send email if SMTP configured
+        try {
+          const mailRows = await query("SELECT email FROM mail_masters WHERE UPPER(cci_mail) IN ('YES','ON','TO','CC')");
+          if (mailRows.length > 0 && process.env.SMTP_USER) {
+            const toEmails = mailRows.map(r => r.email).join(', ');
+            const varRows = varianceSummary.map((v,i) => `<tr><td>${i+1}</td><td>${v.bin}</td><td>${v.sku}</td><td>${v.desc}</td><td>${v.mfg}</td><td>${v.sysQty}</td><td>${v.audQty}</td><td style="color:${v.variance===0?'green':v.variance<0?'red':'orange'}">${v.variance>0?'+':''}${v.variance}</td><td>${v.remark}</td></tr>`).join('');
+            const html = `<h2>CCI Discrepancy Report - ${cciId}</h2><p>Confirmed By: ${username} | Plant: ${whNorm}</p><table border="1" cellpadding="6" style="border-collapse:collapse;font-size:13px"><thead style="background:#1e293b;color:#fff"><tr><th>#</th><th>BIN</th><th>SKU</th><th>Description</th><th>MFG</th><th>Sys Qty</th><th>Audited Qty</th><th>Variance</th><th>Remark</th></tr></thead><tbody>${varRows}</tbody></table>`;
+            await sendEmailNotification(toEmails, `CCI Report - ${cciId} (Plant: ${whNorm})`, html);
+          }
+        } catch(emailErr) { console.warn('CCI email skipped:', emailErr.message); }
+        // Remove confirmed rows from active CCI table
+        await query("DELETE FROM cci WHERE cci_id=? AND status='CONFIRMED'", [cciId]);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `CCI ${cciId} confirmed, stock updated!` } });
+      }
+
+      // -------------------------------------------------------------
+      // INWARD MODULE: MISSING FUNCTIONS
+      // -------------------------------------------------------------
+      case 'iwSaveEditedInwardReportRows23': {
+        const edits = args[0] || [];
+        let updatedCount = 0;
+        for (const edit of edits) {
+          if (!edit.id) continue;
+          const sets = []; const vals = [];
+          if (edit.grn_num !== undefined) { sets.push('grn_num=?'); vals.push(edit.grn_num); }
+          if (edit.line_status !== undefined) { sets.push('line_status=?'); vals.push(edit.line_status); }
+          if (!sets.length) continue;
+          vals.push(edit.id);
+          await query(`UPDATE inward_mis SET ${sets.join(',')} WHERE id=?`, vals);
+          updatedCount++;
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', updatedCount } });
+      }
+
+      case 'iwValidateObdInvoiceBeforePrint': {
+        const obdList = args[0] || [];
+        const duplicates = [];
+        for (const item of obdList) {
+          const obd = (item.obd||'').trim();
+          const inv = (item.invoice||'').trim();
+          if (obd) {
+            const ex = await query('SELECT id FROM inward_mis WHERE UPPER(obd_mat_doc)=?', [obd.toUpperCase()]);
+            if (ex.length > 0) duplicates.push({ key: obd, type: 'OBD' });
+          }
+          if (inv) {
+            const ex2 = await query('SELECT id FROM inward_mis WHERE UPPER(invoice_num)=?', [inv.toUpperCase()]);
+            if (ex2.length > 0) duplicates.push({ key: inv, type: 'Invoice' });
+          }
+        }
+        if (duplicates.length > 0) return res.json({ success: true, result: { status: 'EXISTS', duplicates } });
+        return res.json({ success: true, result: { status: 'OK' } });
+      }
+
+      case 'iwSaveAllObdsToMIS': {
+        const obdList = args[0] || [];
+        const saved = []; const skipped = [];
+        for (const item of obdList) {
+          const obd = (item.obd_mat_doc||item.obd||'').trim();
+          if (!obd) continue;
+          const ex = await query('SELECT id FROM inward_mis WHERE UPPER(obd_mat_doc)=?', [obd.toUpperCase()]);
+          if (ex.length > 0) { skipped.push(obd); continue; }
+          await query('INSERT INTO inward_mis (plant_code, obd_mat_doc, invoice_num, invoice_date, vehicle_no, material_code, material_desc, billed_batch, bill_qty, status, supervisor_name, deo, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [item.plant_code||'BB04', obd, item.invoice_num||'', item.invoice_date||'', item.vehicle_no||'', item.material_code||'', item.material_desc||'', item.billed_batch||'', Number(item.bill_qty)||0, 'UNLOADING', item.supervisor_name||'', item.deo||'admin', new Date().toISOString()]);
+          saved.push(obd);
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', savedCount: saved.length, skipped } });
+      }
+
+      case 'iwLoadFromObdNumber': {
+        const obd = (args[0]||'').trim();
+        const rows = await query('SELECT * FROM inward_mis WHERE UPPER(obd_mat_doc)=? ORDER BY id', [obd.toUpperCase()]);
+        return res.json({ success: true, result: { status: rows.length ? 'SUCCESS' : 'NOT_FOUND', rows: rows.map(r => ({ id: r.id, obd: r.obd_mat_doc, invoice: r.invoice_num, plant: r.plant_code, vehicle: r.vehicle_no, sku: r.material_code, desc: r.material_desc, batch: r.billed_batch, billedQty: Number(r.bill_qty)||0, phyQty: Number(r.phy_qty)||0, bin: r.bin||'', status: r.status||'UNLOADING' })) } });
+      }
+
+      case 'iwGetObdDataForReprint': {
+        const obd = (args[0]||'').trim();
+        const rows = await query('SELECT * FROM inward_mis WHERE UPPER(obd_mat_doc)=? ORDER BY id', [obd.toUpperCase()]);
+        return res.json({ success: true, result: { status: rows.length ? 'SUCCESS' : 'NOT_FOUND', rows } });
+      }
+
+      case 'iwBatchInwardWithMIS': {
+        const lines = args[0] || [];
+        let savedCount = 0;
+        for (const line of lines) {
+          const sku = _norm(line.sku || line.material_code || '');
+          const qty = Number(line.qty || line.phy_qty) || 0;
+          const bin = (line.bin || '').trim().toUpperCase();
+          const mfg = (line.phy_batch || line.mfg || '').replace(/^'/,'').trim();
+          const warehouse = _norm(line.warehouse || line.plant || 'BB04');
+          if (!sku || qty <= 0) continue;
+          // Update inward_mis status
+          if (line.id) {
+            await query('UPDATE inward_mis SET phy_qty=?, phy_batch=?, bin=?, status=?, line_status=? WHERE id=?',
+              [qty, mfg, bin, 'CONFIRMED', 'OK', line.id]);
+          }
+          // Update physical stock
+          const ex = await query('SELECT id, available_qty FROM phy_stk_entry WHERE UPPER(sku_code)=? AND UPPER(bin_no)=? AND UPPER(plant)=?', [sku, bin, warehouse]);
+          if (ex.length > 0) {
+            await query('UPDATE phy_stk_entry SET available_qty=?, updated_at=? WHERE id=?',
+              [(Number(ex[0].available_qty)||0)+qty, new Date().toISOString(), ex[0].id]);
+          } else {
+            await query('INSERT INTO phy_stk_entry (mfg_month,bin_no,sku_code,product_name,available_qty,computation_logic,plant,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+              [mfg, bin, sku, line.desc||sku, qty, String(qty), warehouse, new Date().toISOString()]);
+          }
+          savedCount++;
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', savedCount } });
+      }
+
+      case 'iwDeletePendingObdBackend22': {
+        const obd = (args[0]||'').trim();
+        if (!obd) return res.json({ success: true, result: { status: 'ERROR', message: 'OBD required.' } });
+        const result = await query("DELETE FROM inward_mis WHERE UPPER(obd_mat_doc)=? AND status='UNLOADING'", [obd.toUpperCase()]);
+        return res.json({ success: true, result: { status: 'SUCCESS', deletedCount: result.changes || 0 } });
+      }
+
+      case 'iwDeletePendingAsnBackend': {
+        const [asnNo, userPlant] = args;
+        const asnNorm = (asnNo||'').trim();
+        await query("DELETE FROM asn WHERE UPPER(asn_no)=? AND status='Pending'", [asnNorm.toUpperCase()]);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `ASN ${asnNorm} cancelled.` } });
+      }
+
+      // -------------------------------------------------------------
+      // ORDER CHECKER: MISSING FUNCTIONS
+      // -------------------------------------------------------------
+      case 'ocGetSODetails': {
+        const [warehouse, soNumber] = args;
+        const soNorm = _norm(soNumber || '');
+        if (!soNorm) return res.json({ success: true, result: { status: 'NOT_FOUND' } });
+        const oc = await query('SELECT * FROM order_checker WHERE UPPER(order_no)=?', [soNorm]);
+        if (!oc.length) return res.json({ success: true, result: { status: 'NOT_FOUND' } });
+        const r = oc[0];
+        let lines = [];
+        try { lines = JSON.parse(r.lines_json || '[]'); } catch(e) {}
+        return res.json({ success: true, result: { status: 'SUCCESS', source: 'order_checker', meta: { soNumber: r.order_no, soDate: r.doc_date, party: r.customer_name, dest: r.cust_ref, allocRemark: r.alloc_remark, shortageRemark: r.shortage_remark }, lines, isAllocated: true } });
+      }
+
+      case 'ocSaveVehDriver': {
+        const [warehouse, soNumber, vehNumber, driverContact, unloadPriority, userId] = args;
+        const soNorm = _norm(soNumber || '');
+        const veh = (vehNumber||'').toUpperCase().trim();
+        const drv = (driverContact||'').trim();
+        const priority = (unloadPriority||'').trim();
+        await query('UPDATE order_checker SET vehicle_no=?, driver_no=? WHERE UPPER(order_no)=?',
+          [veh, drv, soNorm]);
+        await query('UPDATE operation_sheet SET vehicle_no=?, driver_no=? WHERE UPPER(order_no)=?',
+          [veh, drv, soNorm]);
+        return res.json({ success: true, result: { status: 'SUCCESS' } });
+      }
+
+      case 'ocSaveObdPgi': {
+        const [warehouse, soNumber, obd, pgi, userId] = args;
+        const soNorm = _norm(soNumber||'');
+        await query('UPDATE order_checker SET vehicle_no=COALESCE(vehicle_no,vehicle_no) WHERE UPPER(order_no)=?', [soNorm]);
+        await query('UPDATE operation_sheet SET obd=?, status=? WHERE UPPER(order_no)=?', [obd||'', pgi ? 'PGI Done' : 'Picking', soNorm]);
+        await query('UPDATE clear_order SET obd=?, pgi=? WHERE UPPER(so_no)=?', [obd||'', pgi||'', soNorm]);
+        await query('UPDATE partial_clear_orders SET obd=?, pgi=? WHERE UPPER(so_no)=?', [obd||'', pgi||'', soNorm]);
+        return res.json({ success: true, result: { status: 'SUCCESS' } });
+      }
+
+      case 'ocUpdatePartialOrder': {
+        const [warehouse, payload, userId] = args;
+        const soNum = _norm(payload.soNumber || payload.orderNo || '');
+        // Delete existing allocation first
+        await query('DELETE FROM shortage_partial WHERE UPPER(so_no)=?', [soNum]);
+        await query('DELETE FROM partial_clear_orders WHERE UPPER(so_no)=?', [soNum]);
+        await query('DELETE FROM sap_stk_allocation WHERE UPPER(so_no)=?', [soNum]);
+        await query('DELETE FROM clear_order WHERE UPPER(so_no)=?', [soNum]);
+        // Re-route to appropriate submit based on allClear flag
+        if (payload.allClear) {
+          // Treat as clear order
+          await query('INSERT INTO clear_order (warehouse,so_no,so_date,party_name,reference,submit_time,total_lines,lines_json,updated_by) VALUES (?,?,?,?,?,?,?,?,?)',
+            [warehouse, soNum, payload.soDate||'', payload.partyName||'', payload.custRef||'', new Date().toISOString(), (payload.lines||[]).length, JSON.stringify(payload.lines||[]), userId||'admin']);
+        } else {
+          await query('INSERT INTO partial_clear_orders (warehouse,so_no,so_date,party_name,reference,submit_time,clear_lines_json,updated_by) VALUES (?,?,?,?,?,?,?,?)',
+            [warehouse, soNum, payload.soDate||'', payload.partyName||'', payload.custRef||'', new Date().toISOString(), JSON.stringify(payload.clearLines||[]), userId||'admin']);
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `Order ${soNum} updated.` } });
+      }
+
+      case 'ocUnblockOrder': {
+        const [warehouse, soNumber] = args;
+        const soNorm = _norm(soNumber || '');
+        // Remove (Block) from alloc_remark and update to Without Allocation
+        await query("UPDATE order_checker SET alloc_remark=REPLACE(alloc_remark,' (Block)',''), status='Without Allocation' WHERE UPPER(order_no)=?", [soNorm]);
+        await query("UPDATE operation_sheet SET alloc_remark=REPLACE(alloc_remark,' (Block)','') WHERE UPPER(order_no)=?", [soNorm]);
+        return res.json({ success: true, result: { status: 'SUCCESS', message: `Order ${soNorm} unblocked.` } });
+      }
+
+      case 'ocGetOutwardRegisterData': {
+        const warehouse = _norm(args[0] || 'BB04');
+        const rows = await query('SELECT order_no, doc_date, sold_to_party, customer_name, cust_ref, plant, total_order_qty, shortage_qty, alloc_remark, shortage_remark FROM order_checker WHERE UPPER(plant)=? ORDER BY id', [warehouse]);
+        const headers = ['Sale Document','Document date','Sold to Party','Sold-To Party Name','Customer reference','Plant','Total Order Qty','Shortage Qty','Allocation Remark','Shortage Remark'];
+        const filteredRows = rows.map(r => [r.order_no||'', r.doc_date||'', r.sold_to_party||'', r.customer_name||'', r.cust_ref||'', r.plant||warehouse, Number(r.total_order_qty)||0, Number(r.shortage_qty)||0, r.alloc_remark||'', r.shortage_remark||'']);
+        return res.json({ success: true, result: { status: 'SUCCESS', headers, rows: filteredRows } });
+      }
+
+      case 'ocCheckAllocationsForStored': {
+        const [warehouse, soNumbers] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        if (!Array.isArray(soNumbers) || !soNumbers.length) return res.json({ success: true, result: { status: 'SUCCESS', results: {} } });
+        // Build current stock map
+        const rawStock = await _buildRawStockMapSQL(whNorm);
+        const allocMap = await _buildAllocMapSQL(whNorm);
+        // Calculate net available (excluding the SOs being checked)
+        const excludeSet = new Set(soNumbers.map(s => _norm(s)));
+        const allocRows = await query('SELECT sku_code, inhand_alloc, transit_alloc FROM sap_stk_allocation WHERE UPPER(warehouse)=?', [whNorm]);
+        const runInh = {}, runTrn = {};
+        Object.entries(rawStock).forEach(([sku, s]) => { runInh[sku] = s.sap; runTrn[sku] = s.transit; });
+        allocRows.forEach(r => {
+          const sku = _norm(r.sku_code);
+          const so = _norm(r.so_no || '');
+          if (excludeSet.has(so)) return; // Don't subtract their own allocation
+          runInh[sku] = Math.max(0, (runInh[sku]||0) - (Number(r.inhand_alloc)||0));
+          runTrn[sku] = Math.max(0, (runTrn[sku]||0) - (Number(r.transit_alloc)||0));
+        });
+        const results = {};
+        for (const soNum of soNumbers) {
+          const soNorm = _norm(soNum);
+          const ocRow = await query('SELECT lines_json FROM order_checker WHERE UPPER(order_no)=?', [soNorm]);
+          if (!ocRow.length) { results[soNorm] = { status: 'NOT_FOUND' }; continue; }
+          let lines = [];
+          try { lines = JSON.parse(ocRow[0].lines_json || '[]'); } catch(e) {}
+          let isShort = false;
+          const details = [];
+          for (const line of lines) {
+            const sku = _norm(line.sku);
+            const reqQty = Number(line.qty) || 0;
+            const inhAvail = runInh[sku] || 0;
+            const inhAlloc = Math.min(inhAvail, reqQty);
+            const shortBT = Math.max(0, reqQty - inhAlloc);
+            const trnAvail = runTrn[sku] || 0;
+            const trnUsed = Math.min(trnAvail, shortBT);
+            const shortAT = Math.max(0, shortBT - trnUsed);
+            if (shortAT > 0) isShort = true;
+            details.push({ sku, reqQty, inhAlloc, trnUsed, shortAT });
+          }
+          results[soNorm] = { status: isShort ? 'SHORT' : 'CLEAR', details };
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', results } });
+      }
+
+      case 'ocAllocateStoredOrders': {
+        const [warehouse, soNumbers, userId, isManualAllocation, pgi] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        if (!Array.isArray(soNumbers) || !soNumbers.length) return res.json({ success: true, result: { status: 'SUCCESS', results: {} } });
+        const rawStock = await _buildRawStockMapSQL(whNorm);
+        const runInh = {}; const runTrn = {};
+        Object.entries(rawStock).forEach(([sku, s]) => { runInh[sku] = s.sap; runTrn[sku] = s.transit; });
+        const results = {};
+        const tsStr = new Date().toISOString();
+        for (const soNum of soNumbers) {
+          const soNorm = _norm(soNum);
+          // Delete old allocation data
+          await query('DELETE FROM sap_stk_allocation WHERE UPPER(so_no)=? AND UPPER(warehouse)=?', [soNorm, whNorm]);
+          await query('DELETE FROM shortage_partial WHERE UPPER(so_no)=? AND UPPER(warehouse)=?', [soNorm, whNorm]);
+          await query('DELETE FROM partial_clear_orders WHERE UPPER(so_no)=? AND UPPER(warehouse)=?', [soNorm, whNorm]);
+          const ocRow = await query('SELECT * FROM order_checker WHERE UPPER(order_no)=?', [soNorm]);
+          if (!ocRow.length) { results[soNorm] = { status: 'NOT_FOUND' }; continue; }
+          const oc = ocRow[0];
+          let lines = [];
+          try { lines = JSON.parse(oc.lines_json || '[]'); } catch(e) {}
+          const allocBatch = [], shortageB = [], clearLines = [], shortLines = [];
+          let totalQty = 0, transitQty = 0, shortQty = 0;
+          const shortRemarks = [];
+          for (const line of lines) {
+            const sku = _norm(line.sku); const reqQty = Number(line.qty)||0;
+            if (!sku || reqQty <= 0) continue;
+            const curInh = Math.max(0, runInh[sku]||0); const curTrn = Math.max(0, runTrn[sku]||0);
+            const inhAlloc = Math.min(curInh, reqQty); const shortBT = Math.max(0, reqQty - inhAlloc);
+            const trnUsed = Math.min(curTrn, shortBT); const shortAT = Math.max(0, shortBT - trnUsed);
+            runInh[sku] = Math.max(0, curInh - inhAlloc); runTrn[sku] = Math.max(0, curTrn - trnUsed);
+            totalQty += reqQty;
+            if (inhAlloc > 0 || trnUsed > 0) { clearLines.push({sku, qty: inhAlloc+trnUsed}); allocBatch.push([whNorm, tsStr, soNorm, oc.doc_date||'', oc.customer_name||'', oc.cust_ref||'', sku, inhAlloc, trnUsed, userId||'admin']); }
+            if (trnUsed > 0) { transitQty += trnUsed; shortRemarks.push(`${sku}(${trnUsed})(Transit)`); }
+            if (shortAT > 0) { shortQty += shortAT; shortLines.push({sku, reqQty, shortAT}); shortRemarks.push(`${sku}(${shortAT})`); shortageB.push([whNorm, soNorm, oc.customer_name||'', oc.doc_date||'', sku, line.desc||'', reqQty, inhAlloc, shortBT, shortBT>0?'SHORT':'OK', trnUsed, shortAT, shortAT>0?'SHORT':'OK', tsStr, userId||'admin']); }
+          }
+          if (allocBatch.length) await batchInsert('sap_stk_allocation', ['warehouse','timestamp','so_no','so_date','party_name','reference','sku_code','inhand_alloc','transit_alloc','updated_by'], allocBatch);
+          if (shortageB.length) await batchInsert('shortage_partial', ['warehouse','so_no','party_name','so_date','sku_code','description','req_qty','avail_inhand','short_bt','status_bt','transit_used','short_at','status_at','submit_time','updated_by'], shortageB);
+          const isPartial = shortLines.length > 0;
+          const allocRemark = isPartial ? 'Partial Allocation' : (transitQty > 0 ? 'Full Allocation (Transit)' : 'Full Allocation (Inhand)');
+          const shortRem = shortRemarks.join(', ');
+          if (isPartial) {
+            await query('INSERT INTO partial_clear_orders (warehouse,so_no,so_date,party_name,reference,submit_time,clear_lines_json,updated_by) VALUES (?,?,?,?,?,?,?,?)',
+              [whNorm, soNorm, oc.doc_date||'', oc.customer_name||'', oc.cust_ref||'', tsStr, JSON.stringify(clearLines), userId||'admin']);
+          } else {
+            await query('DELETE FROM clear_order WHERE UPPER(so_no)=? AND UPPER(warehouse)=?', [soNorm, whNorm]);
+            await query('INSERT INTO clear_order (warehouse,so_no,so_date,party_name,reference,submit_time,total_lines,lines_json,updated_by) VALUES (?,?,?,?,?,?,?,?,?)',
+              [whNorm, soNorm, oc.doc_date||'', oc.customer_name||'', oc.cust_ref||'', tsStr, lines.length, JSON.stringify(lines), userId||'admin']);
+          }
+          await query('UPDATE order_checker SET alloc_remark=?, shortage_qty=?, shortage_remark=? WHERE UPPER(order_no)=?',
+            [allocRemark, isPartial ? shortQty : transitQty, shortRem, soNorm]);
+          await query('UPDATE operation_sheet SET alloc_remark=?, shortage_qty=?, shortage_remark=? WHERE UPPER(order_no)=?',
+            [allocRemark, isPartial ? shortQty : transitQty, shortRem, soNorm]);
+          results[soNorm] = { status: isPartial ? 'PARTIAL' : 'CLEAR', allocRemark };
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', results } });
+      }
+
+      case 'ocPreviewBatchPicking': {
+        const [warehouse, soNumbers] = args;
+        const whNorm = _norm(warehouse || 'BB04');
+        if (!Array.isArray(soNumbers) || !soNumbers.length) return res.json({ success: true, result: { status: 'SUCCESS', rows: [] } });
+        const rawStock = await _buildRawStockMapSQL(whNorm);
+        const runInh = {};
+        Object.entries(rawStock).forEach(([sku, s]) => { runInh[sku] = s.sap; });
+        const previewRows = [];
+        for (const soNum of soNumbers) {
+          const soNorm = _norm(soNum);
+          const ocRow = await query('SELECT * FROM order_checker WHERE UPPER(order_no)=?', [soNorm]);
+          if (!ocRow.length) continue;
+          let lines = [];
+          try { lines = JSON.parse(ocRow[0].lines_json || '[]'); } catch(e) {}
+          for (const line of lines) {
+            const sku = _norm(line.sku); const reqQty = Number(line.qty)||0;
+            const avail = Math.min(runInh[sku]||0, reqQty);
+            const short = Math.max(0, reqQty - avail);
+            runInh[sku] = Math.max(0, (runInh[sku]||0) - avail);
+            previewRows.push({ soNumber: soNorm, sku, reqQty, allocQty: avail, shortQty: short, status: short > 0 ? 'SHORT' : 'CLEAR' });
+          }
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', rows: previewRows } });
+      }
+
+      // -------------------------------------------------------------
+      // OPERATIONS: MISSING FUNCTIONS
+      // -------------------------------------------------------------
+      case 'opReplaceZsoTracking': {
+        const [warehouse, dataArray, userId] = args;
+        if (!Array.isArray(dataArray) || dataArray.length < 2) return res.json({ success: true, result: { status: 'ERROR', message: 'No data provided.' } });
+        const headers = dataArray[0].map(h => _norm(h));
+        const iSO = headers.findIndex(h => h.includes('SALE') || h.includes('SALES') || h.includes('DOCUMENT'));
+        const iDate = headers.findIndex(h => h.includes('DATE'));
+        const iParty = headers.findIndex(h => h.includes('PARTY') || h.includes('CUSTOMER'));
+        const iRef = headers.findIndex(h => h.includes('REF') || h.includes('REFERENCE'));
+        const iOBD = headers.findIndex(h => h === 'OBD' || h.includes('OUTBOUND'));
+        const iQty = headers.findIndex(h => h.includes('QTY') || h.includes('QUANTITY'));
+        let addedCount = 0, updatedCount = 0, deletedCount = 0;
+        const incomingSOs = new Set();
+        for (let i = 1; i < dataArray.length; i++) {
+          const row = dataArray[i];
+          const soNum = _norm(row[iSO] || '');
+          if (!soNum || soNum.length < 6) continue;
+          incomingSOs.add(soNum);
+          const soDate = iDate >= 0 ? (row[iDate]||'') : '';
+          const party = iParty >= 0 ? (row[iParty]||'') : '';
+          const ref = iRef >= 0 ? (row[iRef]||'') : '';
+          const obd = iOBD >= 0 ? (row[iOBD]||'') : '';
+          const qty = iQty >= 0 ? (Number(row[iQty])||0) : 0;
+          const existing = await query('SELECT id FROM operation_sheet WHERE UPPER(order_no)=?', [soNum]);
+          if (existing.length > 0) {
+            await query('UPDATE operation_sheet SET order_date=?, customer_name=?, cust_ref=?, obd=?, ordered_qty=?, updated_at=? WHERE UPPER(order_no)=?',
+              [soDate, party, ref, obd, qty, new Date().toISOString(), soNum]);
+            updatedCount++;
+          } else {
+            await query('INSERT INTO operation_sheet (plant,order_no,order_date,customer_name,cust_ref,ordered_qty,alloc_remark,status) VALUES (?,?,?,?,?,?,?,?)',
+              [warehouse||'BB04', soNum, soDate, party, ref, qty, 'Pending', 'Picking']);
+            addedCount++;
+          }
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', addedCount, updatedCount, deletedCount, message: `ZSO Tracking updated: ${addedCount} added, ${updatedCount} updated.` } });
+      }
+
+      case 'opRefreshShortages': {
+        const warehouse = _norm(args[0] || 'BB04');
+        const checkerRows = await query('SELECT order_no, shortage_qty, alloc_remark, shortage_remark FROM order_checker WHERE UPPER(plant)=?', [warehouse]);
+        let updatedCount = 0;
+        for (const r of checkerRows) {
+          const soNorm = _norm(r.order_no);
+          const ex = await query('SELECT id FROM operation_sheet WHERE UPPER(order_no)=?', [soNorm]);
+          if (!ex.length) continue;
+          await query('UPDATE operation_sheet SET shortage_qty=?, alloc_remark=?, shortage_remark=?, updated_at=? WHERE UPPER(order_no)=?',
+            [Number(r.shortage_qty)||0, r.alloc_remark||'', r.shortage_remark||'', new Date().toISOString(), soNorm]);
+          updatedCount++;
+        }
+        return res.json({ success: true, result: { status: 'SUCCESS', updatedCount, message: `Refreshed ${updatedCount} operation sheet rows from order checker.` } });
+      }
+
+      // -------------------------------------------------------------
       // DEFAULT FALLBACK
       // -------------------------------------------------------------
       default:
         console.log(`[GAS-BRIDGE Warning] Unmapped method call: ${fn}, returning success fallback`);
         return res.json({ success: true, result: { status: "SUCCESS", message: `Executed ${fn} cleanly in SQL engine` } });
+
     }
   } catch (err) {
     console.error(`[GAS-BRIDGE Error]:`, err);

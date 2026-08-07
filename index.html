@@ -3862,6 +3862,14 @@ var subOptions = {
     { name: "Create inbound instruction", icon: "&#x1F4E5;", desc: "Create and print vehicle unloading sheets.", authKey: "Receipts_CreateInbound", tabIndex: 21 },
     { name: "Confirm inbound instruction", icon: "&#x2705;", desc: "Confirm receipts, batches, and bins for unloaded stock.", authKey: "Receipts_ConfirmInbound", tabIndex: 22 },
     { name: "Inbound Report", icon: "&#x1F4CA;", desc: "View and export filtered inbound and unloading reports.", authKey: "Receipts_InboundReport", tabIndex: 23 }
+  ],
+  "Inventory": [
+    { name: "Add / Less Stock", icon: "&#x2795;", desc: "Manually add new physical stock to bins or adjust/cut existing bin inventory.", authKey: "Inventory_AddStock", tabIndex: 28 },
+    { name: "Create CCI", icon: "&#x1F4CB;", desc: "Generate Cycle Count Instruction audit sheets for touched bins.", authKey: "Inventory_CCI", tabIndex: 29 },
+    { name: "Confirm CCI", icon: "&#x2705;", desc: "Audit counted stock, submit variances, and update physical inventory.", authKey: "Inventory_CCI", tabIndex: 30 },
+    { name: "Physical Stock Report", icon: "&#x1F4CA;", desc: "Multi-parameter stock search with Bin-Wise and Pivoted Excel exports.", authKey: "Inventory_StockReport", tabIndex: 31 },
+    { name: "Party Master", icon: "&#x1F465;", desc: "Maintain Contractors, Loading Supervisors, and Transporters.", authKey: "Setup_PartyMaster", tabIndex: 32 },
+    { name: "Mail Master", icon: "&#x1F4E7;", desc: "Configure TO & CC email recipient lists for WMS alerts.", authKey: "Admin_UserAuth", tabIndex: 33 }
   ]
 };
 
@@ -4194,7 +4202,8 @@ function hasModuleAccess(moduleName){
     "Administration": ["Admin_UserAuth", "Admin_ActivityLog"],
     "Setup": ["Setup_BinMaster", "Setup_ProductMaster"],
     "Sales": ["Sales_StkDump", "Sales_OrderChecker", "Sales_OrderEditor", "Sales_DispatchCreation", "Sales_ShortageChecker", "Sales_AllocationView", "Sales_ConfirmOutbound"],
-    "Receipts": ["Receipts_ASN", "Receipts_CreateInbound", "Receipts_ConfirmInbound", "Receipts_InboundReport"]
+    "Receipts": ["Receipts_ASN", "Receipts_CreateInbound", "Receipts_ConfirmInbound", "Receipts_InboundReport"],
+    "Inventory": ["Inventory_AddStock", "Inventory_CCI", "Inventory_StockReport", "Setup_PartyMaster", "Admin_UserAuth"]
   };
   var subKeys = mapping[moduleName] || [];
   if(subKeys.length === 0) return true;
@@ -4202,7 +4211,7 @@ function hasModuleAccess(moduleName){
 }
 
 function setupModuleNavbar(){
-  var mods = ["Administration","Setup","Sales","Receipts"];
+  var mods = ["Administration","Setup","Sales","Receipts","Inventory"];
   mods.forEach(function(m){
     var tab = document.getElementById("tab_" + m);
     var sb = document.getElementById("sb_" + m);
@@ -4295,7 +4304,7 @@ function exitSubmodule(){
   if(dv) dv.style.display = "block";
   var wh = document.getElementById("workspaceHeader");
   if(wh) wh.style.display = "none";
-  for (var i = 1; i <= 30; i++) {
+  for (var i = 1; i <= 35; i++) {
     var pg = document.getElementById("pg" + i);
     if(pg) pg.classList.remove("on");
     var tab = document.getElementById("tab" + i);
@@ -4455,7 +4464,7 @@ function goTab(n){
   if (mc) mc.scrollTop = 0;
   window.scrollTo(0, 0);
 
-  for (var i = 1; i <= 30; i++) {
+  for (var i = 1; i <= 35; i++) {
     var tEl = document.getElementById("tab"+i);
     if(tEl) tEl.classList.remove("active");
     var pgEl = document.getElementById("pg"+i);
@@ -4489,6 +4498,12 @@ function goTab(n){
   if(n>=14 && n<=20)loadReceiptsPage(n);
   if(n===25)opLoadPage25();
   if(n===27)opLoadPage27();
+  if(n===28) { inv28Init(); }
+  if(n===29) { inv29Init(); }
+  if(n===30) { inv30Init(); }
+  if(n===31) { inv31Init(); }
+  if(n===32) { loadPartyMasterPage32(); }
+  if(n===33) { loadMailMasterPage33(); }
 }
 function tabDone(n){
   var tEl = document.getElementById("tab"+n);
@@ -16490,6 +16505,819 @@ function opSubmitOutboundDeduct27() {
     })
     .opConfirmOutboundDeductStock(payload);
 }
+
+/* =========================================================================
+   PAGE 28, 29, 30, 31: INVENTORY & CCI MODULE JAVASCRIPT LOGIC
+   ========================================================================= */
+
+// Clean MFG Month Display Helper
+function _formatMfgDisplay(val) {
+  if (!val) return "";
+  var s = String(val).replace(/^'/, "").trim();
+  if (!s) return "";
+  
+  if (s.indexOf("GMT") !== -1 || s.indexOf("T00:") !== -1 || s.match(/^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}/i)) {
+    var d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      var mNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+      var m = mNames[d.getMonth()];
+      var y2 = String(d.getFullYear()).slice(-2);
+      return m + y2;
+    }
+  }
+
+  var mIso = s.match(/^(\d{4})[-/](\d{1,2})/);
+  if (mIso) {
+    var yr = mIso[1].slice(-2);
+    var mo = parseInt(mIso[2], 10) - 1;
+    var mNames2 = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    if (mo >= 0 && mo < 12) return mNames2[mo] + yr;
+  }
+
+  return s.toUpperCase();
+}
+
+// Page 28: Add / Less Stock
+var invAddMasterData = { bins: [], skus: [], mfgOptions: [] };
+var invLessStockItems = [];
+
+function inv28Init() {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        invAddMasterData = res;
+      }
+    })
+    .invGetMasterDataForAddStock(activeWarehouse);
+}
+
+function invSwitchAdjustMode(mode) {
+  var addSec = document.getElementById('invAddStockSection');
+  var lessSec = document.getElementById('invLessStockSection');
+  var addBtn = document.getElementById('invModeAddBtn');
+  var lessBtn = document.getElementById('invModeLessBtn');
+
+  if (mode === 'ADD') {
+    if (addSec) addSec.style.display = 'block';
+    if (lessSec) lessSec.style.display = 'none';
+    if (addBtn) addBtn.className = 'btn btn-p';
+    if (lessBtn) lessBtn.className = 'btn btn-ghost';
+  } else {
+    if (addSec) addSec.style.display = 'none';
+    if (lessSec) lessSec.style.display = 'block';
+    if (addBtn) addBtn.className = 'btn btn-ghost';
+    if (lessBtn) lessBtn.className = 'btn btn-p';
+  }
+}
+
+function invShowAddBinDrop(input) {
+  var drop = document.getElementById('invAddBinDrop');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var filtered = (invAddMasterData.bins || []).filter(function(b) {
+    return !val || b.toUpperCase().indexOf(val) !== -1;
+  });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(b) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="invSelectAddBin(\'' + b + '\')">'+b+'</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function invSelectAddBin(b) {
+  var el = document.getElementById('invAddBin');
+  if (el) el.value = b;
+  var drop = document.getElementById('invAddBinDrop');
+  if (drop) drop.style.display = 'none';
+}
+
+function invShowAddSkuDrop(input) {
+  var drop = document.getElementById('invAddSkuDrop');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var filtered = (invAddMasterData.skus || []).filter(function(s) {
+    return !val || s.code.toUpperCase().indexOf(val) !== -1 || (s.desc || '').toUpperCase().indexOf(val) !== -1;
+  });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(s) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="invSelectAddSku(\'' + s.code + '\', \'' + (s.desc || '').replace(/'/g, "\\'") + '\')">'
+      + '<strong>' + s.code + '</strong> - ' + (s.desc || '') + '</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function invShowAddDescDrop(input) {
+  invShowAddSkuDrop(document.getElementById('invAddSku'));
+}
+
+function invOnDescInput(input) {
+  var val = (input.value || '').trim().toUpperCase();
+  var match = (invAddMasterData.skus || []).find(function(s) { return (s.desc || '').toUpperCase() === val; });
+  var skuEl = document.getElementById('invAddSku');
+  if (match && skuEl) { skuEl.value = match.code; }
+}
+
+function invOnSkuInput(input) {
+  invShowAddSkuDrop(input);
+  var val = (input.value || '').trim().toUpperCase();
+  var match = (invAddMasterData.skus || []).find(function(s) { return s.code.toUpperCase() === val; });
+  var descEl = document.getElementById('invAddDesc');
+  if (match && descEl) { descEl.value = match.desc || ''; }
+}
+
+function invSelectAddSku(code, desc) {
+  var skuEl = document.getElementById('invAddSku');
+  var descEl = document.getElementById('invAddDesc');
+  if (skuEl) skuEl.value = code;
+  if (descEl) descEl.value = desc;
+  var drop = document.getElementById('invAddSkuDrop');
+  if (drop) drop.style.display = 'none';
+}
+
+function invShowAddMfgDrop(input) {
+  var drop = document.getElementById('invAddMfgDrop');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var filtered = (invAddMasterData.mfgOptions || []).filter(function(m) {
+    return !val || m.toUpperCase().indexOf(val) !== -1;
+  });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(m) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="invSelectAddMfg(\'' + m + '\')">'
+      + m + '</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function invSelectAddMfg(m) {
+  var el = document.getElementById('invAddMfg');
+  if (el) el.value = m;
+  var drop = document.getElementById('invAddMfgDrop');
+  if (drop) drop.style.display = 'none';
+}
+
+function invSubmitManualAddStock() {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  var bin = document.getElementById('invAddBin').value.trim().toUpperCase();
+  var sku = document.getElementById('invAddSku').value.trim().toUpperCase();
+  var desc = document.getElementById('invAddDesc').value.trim();
+  var qty = Number(document.getElementById('invAddQty').value) || 0;
+  var mfg = document.getElementById('invAddMfg').value.trim();
+
+  if (!bin) { alert("Please select or enter BIN Number."); return; }
+  if (!sku) { alert("Please select or enter SKU Code."); return; }
+  if (qty <= 0) { alert("Please enter valid Quantity (> 0)."); return; }
+  if (!mfg) { alert("Please select or enter MFG Month."); return; }
+
+  showToast("Saving...", "Adding stock to BIN " + bin + "...", "var(--p)");
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        showToast("Success", res.message, "#16a34a");
+        document.getElementById('invAddQty').value = "";
+        inv28Init();
+      } else {
+        alert("Error adding stock: " + (res ? res.message : "Unknown error"));
+      }
+    })
+    .withFailureHandler(function(err) { alert("Error adding stock: " + err.message); })
+    .invManualAddStock(activeWarehouse, bin, sku, desc, qty, mfg, activeUser);
+}
+
+function invShowLessBinDrop(input) {
+  var drop = document.getElementById('invLessBinDrop');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var filtered = (invAddMasterData.bins || []).filter(function(b) {
+    return !val || b.toUpperCase().indexOf(val) !== -1;
+  });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(b) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="invSelectLessBin(\'' + b + '\')">'
+      + b + '</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function invSelectLessBin(b) {
+  var el = document.getElementById('invLessBin');
+  if (el) el.value = b;
+  var drop = document.getElementById('invLessBinDrop');
+  if (drop) drop.style.display = 'none';
+  invLoadBinStockDetails();
+}
+
+function invLoadBinStockDetails() {
+  var bin = document.getElementById('invLessBin').value.trim().toUpperCase();
+  var container = document.getElementById('invLessStockContainer');
+  if (!bin) { alert("Please select a BIN Number."); return; }
+  if (container) container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--sub);">&#x23F3; Loading BIN ' + bin + ' stock items...</div>';
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        invLessStockItems = res.items || [];
+        invRenderLessStockTable(bin, invLessStockItems);
+      } else {
+        if (container) container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red);">&#x274C; ' + (res ? res.message : 'Failed to load BIN stock.') + '</div>';
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (container) container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red);">&#x274C; Error: ' + err.message + '</div>';
+    })
+    .invGetBinStockDetails(activeWarehouse, bin);
+}
+
+function invRenderLessStockTable(bin, items) {
+  var container = document.getElementById('invLessStockContainer');
+  if (!container) return;
+  if (items.length === 0) {
+    container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--sub);">No available stock found in BIN ' + bin + '.</div>';
+    return;
+  }
+  var rowsHtml = items.map(function(it, idx) {
+    var cleanMfg = _formatMfgDisplay(it.mfg);
+    return '<tr id="invLessRow_' + idx + '">' +
+      '<td style="text-align:center; font-weight:600;">' + (idx + 1) + '</td>' +
+      '<td><strong class="row-mono">' + it.sku + '</strong></td>' +
+      '<td>' + (it.name || '-') + '</td>' +
+      '<td style="position:relative;">'+
+        '<input type="text" id="invLessMfg_' + idx + '" value="' + cleanMfg + '" class="input-in" style="width:110px; text-transform:uppercase; height:32px; text-align:center;">'+
+      '</td>' +
+      '<td><input type="number" id="invLessQty_' + idx + '" value="' + it.qty + '" class="input-in" style="width:90px; height:32px; text-align:right;"></td>' +
+      '<td style="position:relative;">'+
+        '<input type="text" id="invLessBin_' + idx + '" value="' + it.bin + '" class="input-in" style="width:110px; text-transform:uppercase; height:32px; text-align:center;">'+
+      '</td>' +
+      '<td style="text-align:center; vertical-align:middle; width:100px;">'+
+        '<button class="btn" onclick="invSaveItemAdjust(' + idx + ', \'UPDATE\')" style="background:#2563eb; color:#fff; padding:6px 14px; font-weight:600; font-size:12px; border-radius:6px; border:none; cursor:pointer;">&#x1F4BE; Save</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+  container.innerHTML = '<div style="overflow-x:auto; padding-bottom:120px;"><table class="tbl" style="min-width:950px;">' +
+    '<thead><tr>' +
+      '<th style="width:50px; text-align:center;">#</th>' +
+      '<th>SKU Code</th>' +
+      '<th>Description</th>' +
+      '<th style="width:130px; text-align:center;">Edit MFG</th>' +
+      '<th style="width:110px; text-align:right;">Edit Qty</th>' +
+      '<th style="width:130px; text-align:center;">Edit BIN</th>' +
+      '<th style="width:100px; text-align:center;">Actions</th>' +
+    '</tr></thead>' +
+    '<tbody>' + rowsHtml + '</tbody>' +
+  '</table></div>';
+}
+
+function getMfgMasterList() {
+  if (invAddMasterData && invAddMasterData.mfgOptions && invAddMasterData.mfgOptions.length > 0) {
+    return invAddMasterData.mfgOptions;
+  }
+  var mfgOptions = [];
+  var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  var currentYear = new Date().getFullYear();
+  var years = [currentYear - 1, currentYear, currentYear + 1];
+  years.forEach(function(yr) {
+    var y2 = String(yr).slice(-2);
+    months.forEach(function(m) { mfgOptions.push(m + y2); });
+  });
+  return mfgOptions;
+}
+
+function invSaveItemAdjust(idx, action) {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  var item = invLessStockItems[idx];
+  if (!item) return;
+  var newQty = Number(document.getElementById('invLessQty_' + idx).value) || 0;
+  var newMfg = document.getElementById('invLessMfg_' + idx).value.trim();
+  var newBin = document.getElementById('invLessBin_' + idx).value.trim().toUpperCase();
+  if (action === 'DELETE' && !confirm("Are you sure you want to completely CUT/REMOVE SKU " + item.sku + " from BIN " + item.bin + "?")) { return; }
+  var payload = [{ rowIndex: item.rowIndex, action: action, qty: newQty, mfg: newMfg, bin: newBin }];
+  showToast("Saving...", "Adjusting BIN stock...", "var(--p)");
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        showToast("Success", res.message, "#16a34a");
+        invLoadBinStockDetails();
+      } else {
+        alert("Error adjusting stock: " + (res ? res.message : "Unknown error"));
+      }
+    })
+    .withFailureHandler(function(err) { alert("Error: " + err.message); })
+    .invManualAdjustStock(activeWarehouse, item.bin, payload, activeUser);
+}
+
+// Page 29: Create CCI
+var cciCurrentCreatedItems = [];
+
+function inv29Init() {
+  inv28Init();
+  var now = new Date();
+  var pad = function(n) { return String(n).padStart(2, '0'); };
+  var fEl = document.getElementById('cciDateFrom29');
+  var tEl = document.getElementById('cciDateTo29');
+  if (fEl) fEl.value = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + 'T00:00';
+  if (tEl) tEl.value = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + 'T23:59';
+}
+
+function cciCreateInstruction29() {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  var fVal = document.getElementById('cciDateFrom29').value;
+  var tVal = document.getElementById('cciDateTo29').value;
+  var resSec = document.getElementById('cciResultSection29');
+  var tbody = document.getElementById('cciTableBody29');
+  if (resSec) resSec.style.display = 'block';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--sub);">&#x23F3; Scanning touched bins and generating CCI...</td></tr>';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        cciCurrentCreatedItems = res.items || [];
+        document.getElementById('cciHeaderTitle29').textContent = "Instruction ID: " + res.cciId + " (" + res.totalBins + " Bins, " + res.totalItems + " Lines)";
+        cciRenderCreatedTable29(cciCurrentCreatedItems);
+      } else {
+        if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--red);">&#x274C; ' + (res ? res.message : "Failed to create CCI.") + '</td></tr>';
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--red);">&#x274C; Error: ' + err.message + '</td></tr>';
+    })
+    .invCreateCCI(activeWarehouse, fVal, tVal, activeUser);
+}
+
+function cciRenderCreatedTable29(items) {
+  var tbody = document.getElementById('cciTableBody29');
+  if (!tbody) return;
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--sub);">No stock items found for selected range.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(function(it, idx) {
+    return '<tr>' +
+      '<td style="text-align:center; font-weight:600;">' + (idx + 1) + '</td>' +
+      '<td><strong class="row-mono">' + it.bin + '</strong></td>' +
+      '<td><strong class="row-mono">' + it.sku + '</strong></td>' +
+      '<td>' + (it.desc || '-') + '</td>' +
+      '<td style="text-align:center;">' + _formatMfgDisplay(it.mfg) + '</td>' +
+      '<td style="text-align:right; font-weight:700;">' + it.qty + '</td>' +
+      '<td style="border:1px solid #cbd5e1; background:#fff;"></td>' +
+      '<td style="border:1px solid #cbd5e1; background:#fff;"></td>' +
+      '<td style="border:1px solid #cbd5e1; background:#fff;"></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function cciPrintInstruction29() {
+  var printArea = document.getElementById('cciPrintableArea29');
+  var headerTitle = document.getElementById('cciHeaderTitle29').textContent;
+  if (!printArea) return;
+  var win = window.open('', '_blank');
+  win.document.write('<html><head><title>CCI Audit Print Sheet</title>' +
+    '<style>body { font-family: Arial, sans-serif; font-size:12px; margin:20px; }' +
+    'h2 { margin-bottom:4px; }' +
+    'table { width:100%; border-collapse:collapse; margin-top:14px; }' +
+    'th, td { border:1px solid #000; padding:6px 8px; font-size:11px; }' +
+    'th { background:#f1f5f9; text-align:left; }' +
+    '</style></head><body>' +
+    '<h2>&#x1F4CB; Cycle Count Instruction (CCI) Audit Sheet</h2>' +
+    '<div><strong>Plant:</strong> ' + (activeWarehouse || 'BB04') + ' | <strong>' + headerTitle + '</strong></div>' +
+    printArea.innerHTML +
+    '</body></html>');
+  win.document.close();
+  win.print();
+}
+
+// Page 30: Confirm CCI
+var cciPendingItems30 = [];
+var cciActiveId30 = "";
+
+function inv30Init() {
+  inv28Init();
+  cciLoadPendingList30();
+}
+
+function cciLoadPendingList30() {
+  var sel = document.getElementById('cciSelectPending30');
+  if (sel) sel.innerHTML = '<option value="">&#x23F3; Loading pending CCIs...</option>';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        var list = res.cciList || [];
+        if (sel) {
+          if (list.length === 0) {
+            sel.innerHTML = '<option value="">-- No Pending CCIs Found --</option>';
+          } else {
+            sel.innerHTML = '<option value="">-- Select Pending CCI (' + list.length + ') --</option>' +
+              list.map(function(c) {
+                return '<option value="' + c.cciId + '">' + c.cciId + ' (' + c.itemCount + ' lines, ' + (c.creationDate || '') + ')</option>';
+              }).join('');
+          }
+        }
+      } else {
+        if (sel) sel.innerHTML = '<option value="">&#x274C; ' + (res ? res.message : 'Failed to load CCIs') + '</option>';
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (sel) sel.innerHTML = '<option value="">&#x274C; Error: ' + err.message + '</option>';
+    })
+    .invGetPendingCCI(activeWarehouse);
+}
+
+function cciOnPendingSelect30() {
+  var cciId = document.getElementById('cciSelectPending30').value;
+  var sec = document.getElementById('cciConfirmSection30');
+  var tbody = document.getElementById('cciConfirmTableBody30');
+  cciActiveId30 = cciId;
+  if (!cciId) { if (sec) sec.style.display = 'none'; return; }
+  if (sec) sec.style.display = 'block';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--sub);">&#x23F3; Loading CCI details for ' + cciId + '...</td></tr>';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        cciPendingItems30 = res.items || [];
+        document.getElementById('cciConfirmTitle30').textContent = "Instruction ID: " + cciId + " (" + cciPendingItems30.length + " lines)";
+        cciRenderConfirmTable30(cciPendingItems30);
+      } else {
+        if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--red);">&#x274C; ' + (res ? res.message : "Failed to load items.") + '</td></tr>';
+      }
+    })
+    .invGetPendingCCI(activeWarehouse, cciId);
+}
+
+function cciRenderConfirmTable30(items) {
+  var tbody = document.getElementById('cciConfirmTableBody30');
+  if (!tbody) return;
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--sub);">No items found in selected CCI.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(function(it, idx) {
+    var cleanMfg = _formatMfgDisplay(it.mfg);
+    return '<tr>' +
+      '<td style="text-align:center; font-weight:600;">' + (idx + 1) + '</td>' +
+      '<td><strong class="row-mono">' + it.bin + '</strong></td>' +
+      '<td><strong class="row-mono">' + it.sku + '</strong></td>' +
+      '<td>' + (it.desc || '-') + '</td>' +
+      '<td style="text-align:center;">' + cleanMfg + '</td>' +
+      '<td style="text-align:right; font-weight:700;">' + it.sysQty + '</td>' +
+      '<td><input type="text" id="cciAudMfg_' + idx + '" value="' + _formatMfgDisplay(it.auditedMfg || cleanMfg) + '" class="input-in" style="width:100px; text-transform:uppercase; height:32px; text-align:center;"></td>' +
+      '<td><input type="number" id="cciAudQty_' + idx + '" value="' + (it.auditedQty !== "" ? it.auditedQty : it.sysQty) + '" class="input-in" style="width:90px; height:32px; text-align:right;"></td>' +
+      '<td><input type="text" id="cciRemark_' + idx + '" value="' + (it.remark || '') + '" placeholder="Enter audit remark..." class="input-in" style="width:100%; height:32px;"></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function cciSubmitConfirmation30() {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  if (!cciActiveId30 || cciPendingItems30.length === 0) { alert("Please select a valid pending CCI to confirm."); return; }
+  var payload = cciPendingItems30.map(function(it, idx) {
+    return {
+      rowIndex: it.rowIndex,
+      auditedMfg: document.getElementById('cciAudMfg_' + idx).value.trim(),
+      auditedQty: Number(document.getElementById('cciAudQty_' + idx).value) || it.sysQty,
+      remark: document.getElementById('cciRemark_' + idx).value.trim()
+    };
+  });
+  var btn = document.getElementById('cciConfirmSubmitBtn30');
+  if (btn) { btn.disabled = true; btn.innerHTML = '&#x23F3; Confirming...'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '&#x2705; Confirm CCI &amp; Email'; }
+      if (res && res.status === "SUCCESS") {
+        showToast("Success", res.message, "#16a34a");
+        document.getElementById('cciConfirmSection30').style.display = 'none';
+        inv30Init();
+      } else {
+        alert("Error confirming CCI: " + (res ? res.message : "Unknown error"));
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '&#x2705; Confirm CCI &amp; Email'; }
+      alert("Error: " + err.message);
+    })
+    .invConfirmCCI(activeWarehouse, cciActiveId30, payload, activeUser);
+}
+
+// Page 31: Physical Stock Report
+var phyOverviewRows31 = [];
+
+function inv31Init() {
+  inv28Init();
+  phyApplyFilters31();
+}
+
+function phyShowBinDrop31(input) {
+  var drop = document.getElementById('phyRepBinDrop31');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var filtered = (invAddMasterData.bins || []).filter(function(b) {
+    return !val || b.toUpperCase().indexOf(val) !== -1;
+  });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(b) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="document.getElementById(\'phyRepBin31\').value=\'' + b + '\'; document.getElementById(\'phyRepBinDrop31\').style.display=\'none\';">'+b+'</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function phyShowMfgDrop31(input) {
+  var drop = document.getElementById('phyRepMfgDrop31');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var filtered = (invAddMasterData.mfgOptions || getMfgMasterList()).filter(function(m) {
+    return !val || m.toUpperCase().indexOf(val) !== -1;
+  });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(m) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="document.getElementById(\'phyRepMfg31\').value=\'' + m + '\'; document.getElementById(\'phyRepMfgDrop31\').style.display=\'none\';">'+m+'</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function phyOnSkuInput31(input) {
+  var drop = document.getElementById('phyRepSkuDrop31');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var masterSkus = (invAddMasterData && invAddMasterData.skus && invAddMasterData.skus.length > 0) ? invAddMasterData.skus : [];
+  if (val) {
+    var match = masterSkus.find(function(s) { return s.code.toUpperCase() === val; });
+    if (match) { var descEl = document.getElementById('phyRepDesc31'); if (descEl) descEl.value = match.desc; }
+  }
+  var filtered = masterSkus.filter(function(s) { return !val || s.code.toUpperCase().indexOf(val) !== -1 || (s.desc || '').toUpperCase().indexOf(val) !== -1; });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(s) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="phySelectSku31(\'' + s.code.replace(/'/g, "\\'") + '\', \'' + (s.desc || '').replace(/'/g, "\\'") + '\')">'
+      + s.code + ' - ' + (s.desc || '') + '</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function phySelectSku31(code, desc) {
+  var skuEl = document.getElementById('phyRepSku31');
+  var descEl = document.getElementById('phyRepDesc31');
+  if (skuEl) skuEl.value = code;
+  if (descEl) descEl.value = desc;
+  var skuDrop = document.getElementById('phyRepSkuDrop31');
+  if (skuDrop) skuDrop.style.display = 'none';
+}
+
+function phyOnDescInput31(input) {
+  var drop = document.getElementById('phyRepDescDrop31');
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var masterSkus = (invAddMasterData && invAddMasterData.skus && invAddMasterData.skus.length > 0) ? invAddMasterData.skus : [];
+  var filtered = masterSkus.filter(function(s) { return !val || (s.desc || '').toUpperCase().indexOf(val) !== -1; });
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(s) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="phySelectSku31(\'' + s.code.replace(/'/g, "\\'") + '\', \'' + (s.desc || '').replace(/'/g, "\\'") + '\')">'
+      + (s.desc || '') + ' - ' + s.code + '</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function phyApplyFilters31() {
+  var fBin = document.getElementById('phyRepBin31').value.trim();
+  var fMfg = document.getElementById('phyRepMfg31').value.trim();
+  var fSku = document.getElementById('phyRepSku31').value.trim();
+  var fDesc = document.getElementById('phyRepDesc31').value.trim();
+  var fPlant = document.getElementById('phyRepPlant31').value.trim() || activeWarehouse;
+  var countEl = document.getElementById('phyRepCount31');
+  var tbody = document.getElementById('phyRepTableBody31');
+  if (countEl) countEl.textContent = "&#x23F3; Fetching physical stock overview...";
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--sub);">&#x23F3; Loading stock records...</td></tr>';
+  var filters = { bin: fBin, mfg: fMfg, sku: fSku, desc: fDesc, plant: fPlant };
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        phyOverviewRows31 = res.rows || [];
+        if (countEl) countEl.textContent = "Found " + phyOverviewRows31.length + " stock record(s).";
+        phyRenderOverviewTable31(phyOverviewRows31);
+      } else {
+        if (countEl) countEl.textContent = '&#x274C; Failed to load physical stock.';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--red);">&#x274C; ' + (res ? res.message : 'Error') + '</td></tr>';
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (countEl) countEl.textContent = '&#x274C; Error loading stock.';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--red);">&#x274C; Error: ' + err.message + '</td></tr>';
+    })
+    .invGetPhysicalStockOverview(activeWarehouse, filters);
+}
+
+function phyResetFilters31() {
+  ['phyRepBin31','phyRepMfg31','phyRepSku31','phyRepDesc31','phyRepPlant31'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.value = "";
+  });
+  phyApplyFilters31();
+}
+
+function phyRenderOverviewTable31(rows) {
+  var tbody = document.getElementById('phyRepTableBody31');
+  if (!tbody) return;
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--sub);">No stock records found matching filters.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(function(r) {
+    return '<tr>' +
+      '<td>' + r.plant + '</td>' +
+      '<td><strong class="row-mono">' + r.bin + '</strong></td>' +
+      '<td><strong class="row-mono">' + r.sku + '</strong></td>' +
+      '<td>' + (r.desc || '-') + '</td>' +
+      '<td style="text-align:center;">' + _formatMfgDisplay(r.mfg) + '</td>' +
+      '<td style="text-align:right; font-weight:700;">' + r.qty + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function phyExportBinWise31() {
+  if (phyOverviewRows31.length === 0) { alert("No stock data available to export."); return; }
+  var excelRows = [["Plant", "BIN Number", "SKU Code", "Description", "MFG Month", "Physical Qty"]];
+  phyOverviewRows31.forEach(function(r) { excelRows.push([r.plant, r.bin, r.sku, r.desc, _formatMfgDisplay(r.mfg), r.qty]); });
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet(excelRows);
+  XLSX.utils.book_append_sheet(wb, ws, "Bin Wise Stock");
+  XLSX.writeFile(wb, "Bin_Wise_Physical_Stock_" + (activeWarehouse || "BB04") + ".xlsx");
+}
+
+function phyExportPivoted31() {
+  showToast("Preparing...", "Generating Pivoted Physical Stock Report...", "var(--p)");
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS" && res.matrixRows && res.matrixRows.length > 0) {
+        var mfgMonths = (res.mfgMonths || []).map(function(m) { return _formatMfgDisplay(m); });
+        var headers = ["Material Code", "Description", "Total Stock Qty"].concat(mfgMonths);
+        var excelRows = [headers];
+        res.matrixRows.forEach(function(row) {
+          var rData = [row.sku, row.desc, row.totalQty];
+          (res.mfgMonths || []).forEach(function(m) { rData.push(row.mfgQuantities[m] || 0); });
+          excelRows.push(rData);
+        });
+        var wb = XLSX.utils.book_new();
+        var ws = XLSX.utils.aoa_to_sheet(excelRows);
+        XLSX.utils.book_append_sheet(wb, ws, "Pivoted Stock (For Sale)");
+        XLSX.writeFile(wb, "Pivoted_Stock_For_Sale_" + (activeWarehouse || "BB04") + ".xlsx");
+        showToast("Success", "Pivoted stock report exported!", "#16a34a");
+      } else {
+        alert("No stock data available to pivot.");
+      }
+    })
+    .withFailureHandler(function(err) { alert("Error generating pivoted report: " + err.message); })
+    .invGetPivotedStockData(activeWarehouse);
+}
+
+/* --- PARTY MASTER (PAGE 32) --- */
+var partyMasterData32 = [];
+
+function loadPartyMasterPage32() {
+  var tbody = document.getElementById("partyTableBody32");
+  if (!tbody) return;
+  tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; padding:20px; color:var(--sub);'>&#x23F3; Loading party master records...</td></tr>";
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        partyMasterData32 = res.parties || [];
+        renderPartyMasterTable32(partyMasterData32);
+      } else {
+        tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--red);'>&#x274C; " + (res ? res.message : "Failed to load parties.") + "</td></tr>";
+      }
+    })
+    .withFailureHandler(function(err) {
+      tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--red);'>&#x274C; Error: " + err.message + "</td></tr>";
+    })
+    .setupGetPartyMaster();
+}
+
+function renderPartyMasterTable32(parties) {
+  var tbody = document.getElementById("partyTableBody32");
+  if (!tbody) return;
+  if (parties.length === 0) { tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--sub); padding:15px;'>No party master records found.</td></tr>"; return; }
+  tbody.innerHTML = parties.map(function(p) {
+    return '<tr>' +
+      '<td>' + (p.contractor || '-') + '</td>' +
+      '<td>' + (p.supervisor || '-') + '</td>' +
+      '<td>' + (p.transporter || '-') + '</td>' +
+      '<td style="font-family:monospace;">' + (p.gst || '-') + '</td>' +
+      '<td style="text-align:center;"><button class="btn btn-ghost" onclick="deletePartyMaster32(' + p.rowIndex + ')" style="color:#ef4444; padding:3px 8px; font-size:11px;">&#x1F5D1; Delete</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function filterPartyMasterTable32() {
+  var q = (document.getElementById("partySearchInp32").value || "").trim().toLowerCase();
+  var filtered = partyMasterData32.filter(function(p) {
+    return !q || (p.contractor || "").toLowerCase().indexOf(q) !== -1 || (p.supervisor || "").toLowerCase().indexOf(q) !== -1;
+  });
+  renderPartyMasterTable32(filtered);
+}
+
+function savePartyMaster32() {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  var contractor = document.getElementById("partyContractor32").value.trim();
+  var supervisor = document.getElementById("partySupervisor32").value.trim();
+  var transporter = document.getElementById("partyTransporter32").value.trim();
+  var gst = document.getElementById("partyGst32").value.trim();
+  if (!contractor && !supervisor && !transporter) { alert("Please enter at least Contractor, Supervisor, or Transporter Name."); return; }
+  var partyObj = { contractor: contractor, supervisor: supervisor, transporter: transporter, gst: gst };
+  showToast("Saving Party...", "Updating Party Master...", "var(--p)");
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        showToast("Success", res.message, "#16a34a");
+        ['partyContractor32','partySupervisor32','partyTransporter32','partyGst32'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+        loadPartyMasterPage32();
+      } else { alert("Error saving party: " + (res ? res.message : "Unknown error")); }
+    })
+    .withFailureHandler(function(err) { alert("Error: " + err.message); })
+    .setupSavePartyMaster(partyObj, activeUser);
+}
+
+function deletePartyMaster32(rowIndex) {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  if (!confirm("Are you sure you want to delete this Party record?")) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") { showToast("Deleted", res.message, "#16a34a"); loadPartyMasterPage32(); }
+      else { alert("Error deleting party: " + (res ? res.message : "Unknown error")); }
+    })
+    .withFailureHandler(function(err) { alert("Error: " + err.message); })
+    .setupDeletePartyMaster(rowIndex, activeUser);
+}
+
+/* --- MAIL MASTER (PAGE 33) --- */
+var mailMasterData33 = [];
+
+function loadMailMasterPage33() {
+  var tbody = document.getElementById("mailTableBody33");
+  if (!tbody) return;
+  tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; padding:20px; color:var(--sub);'>&#x23F3; Loading Mail ID configurations...</td></tr>";
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") { mailMasterData33 = res.mails || []; renderMailMasterTable33(mailMasterData33); }
+      else { tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--red);'>&#x274C; " + (res ? res.message : "Failed to load emails.") + "</td></tr>"; }
+    })
+    .withFailureHandler(function(err) { tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--red);'>&#x274C; Error: " + err.message + "</td></tr>"; })
+    .setupGetMailMaster();
+}
+
+function renderMailMasterTable33(mails) {
+  var tbody = document.getElementById("mailTableBody33");
+  if (!tbody) return;
+  if (mails.length === 0) { tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--sub); padding:15px;'>No email recipients configured.</td></tr>"; return; }
+  var getBadge = function(role) {
+    var r = (role || 'OFF').toUpperCase();
+    if (r === 'TO') return '<span style="font-size:10px; font-weight:800; padding:2px 8px; border-radius:10px; background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0;">TO</span>';
+    if (r === 'CC') return '<span style="font-size:10px; font-weight:800; padding:2px 8px; border-radius:10px; background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe;">CC</span>';
+    return '<span style="font-size:10px; font-weight:800; padding:2px 8px; border-radius:10px; background:#f1f5f9; color:#64748b;">OFF</span>';
+  };
+  tbody.innerHTML = mails.map(function(m) {
+    return '<tr>' +
+      '<td><strong>' + m.mailId + '</strong></td>' +
+      '<td style="text-align:center;">' + getBadge(m.shortExcess) + '</td>' +
+      '<td style="text-align:center;">' + getBadge(m.remarkTrail) + '</td>' +
+      '<td style="text-align:center;">' + getBadge(m.cciMail) + '</td>' +
+      '<td style="text-align:center;"><button class="btn btn-ghost" onclick="deleteMailMaster33(\'' + m.mailId + '\')" style="color:#ef4444; padding:3px 8px; font-size:11px;">&#x1F5D1; Delete</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function saveMailMaster33() {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  var mailId = document.getElementById("mailIdAddr33").value.trim().toLowerCase();
+  var seRole = document.getElementById("mailIdShortExcess33").value;
+  var rmRole = document.getElementById("mailIdRemarkTrail33").value;
+  var cciRole = document.getElementById("mailIdCci33").value;
+  if (!mailId || mailId.indexOf("@") === -1) { alert("Please enter a valid Email ID Address."); return; }
+  var mailObj = { mailId: mailId, shortExcess: seRole, remarkTrail: rmRole, cciMail: cciRole };
+  showToast("Saving Email...", "Updating Mail ID Master...", "var(--p)");
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") { showToast("Success", res.message, "#16a34a"); document.getElementById("mailIdAddr33").value = ""; loadMailMasterPage33(); }
+      else { alert("Error saving mail: " + (res ? res.message : "Unknown error")); }
+    })
+    .withFailureHandler(function(err) { alert("Error: " + err.message); })
+    .setupSaveMailMaster(mailObj, activeUser);
+}
+
+function deleteMailMaster33(mailId) {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
+  if (!confirm("Are you sure you want to remove " + mailId + " from Mail ID Master?")) return;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") { showToast("Deleted", res.message, "#16a34a"); loadMailMasterPage33(); }
+      else { alert("Error deleting mail: " + (res ? res.message : "Unknown error")); }
+    })
+    .withFailureHandler(function(err) { alert("Error: " + err.message); })
+    .setupDeleteMailMaster(mailId, activeUser);
+}
+
+// Global click to close dropdowns
+document.addEventListener('click', function(e) {
+  var drops = document.querySelectorAll('.dropdown-list');
+  drops.forEach(function(drop) {
+    if (drop.style.display === 'block') {
+      var parent = drop.parentElement;
+      if (parent && !parent.contains(e.target)) { drop.style.display = 'none'; }
+    }
+  });
+});
 </script>
 <!-- Custom Material Time Picker Modal -->
 <div id="materialTimePickerModal" class="mtp-modal" style="display: none;">
@@ -16518,6 +17346,337 @@ function opSubmitOutboundDeduct27() {
       <div class="mtp-actions">
         <button id="mtpCancelBtn" class="mtp-btn-flat" type="button">CANCEL</button>
         <button id="mtpOkBtn" class="mtp-btn-flat mtp-btn-primary" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 28: ADD / LESS STOCK (MANUAL STOCK ADJUSTMENT) -->
+<div class="pg" id="pg28">
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;">&#x2795; Add / Less Stock (Manual Stock Adjustment)</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:2px;">Manually add new physical stock to bins or adjust/cut existing bin inventory.</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+
+    <!-- Mode Selector Tabs -->
+    <div style="display:flex; gap:10px; margin-bottom:16px;">
+      <button class="btn btn-p" id="invModeAddBtn" onclick="invSwitchAdjustMode('ADD')">&#x2795; Manually Add Stock in Bin</button>
+      <button class="btn btn-ghost" id="invModeLessBtn" onclick="invSwitchAdjustMode('LESS')">&#x2796; Less / Edit Bin Stock</button>
+    </div>
+
+    <!-- SECTION A: MANUALLY ADD STOCK IN BIN -->
+    <div id="invAddStockSection" style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:16px;">
+      <div class="section-title" style="margin-top:0; margin-bottom:12px;">&#x1F4CC; Add Stock Entry</div>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px;">
+        <div style="position:relative;">
+          <label>BIN Number <span style="color:var(--red);">*</span></label>
+          <input type="text" id="invAddBin" placeholder="Type or select BIN..." class="input-in" style="width:100%; text-transform:uppercase;" onclick="invShowAddBinDrop(this)" oninput="invShowAddBinDrop(this)">
+          <div id="invAddBinDrop" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000; box-shadow:0 4px 6px rgba(0,0,0,0.1);"></div>
+        </div>
+        <div style="position:relative;">
+          <label>SKU Code <span style="color:var(--red);">*</span></label>
+          <input type="text" id="invAddSku" placeholder="Type or select SKU..." class="input-in" style="width:100%; text-transform:uppercase;" onclick="invShowAddSkuDrop(this)" oninput="invOnSkuInput(this)">
+          <div id="invAddSkuDrop" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000; box-shadow:0 4px 6px rgba(0,0,0,0.1);"></div>
+        </div>
+        <div style="position:relative;">
+          <label>Description</label>
+          <input type="text" id="invAddDesc" placeholder="Type or select Description..." class="input-in" style="width:100%;" onclick="invShowAddDescDrop(this)" oninput="invOnDescInput(this)">
+          <div id="invAddDescDrop" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000; box-shadow:0 4px 6px rgba(0,0,0,0.1);"></div>
+        </div>
+        <div>
+          <label>Quantity <span style="color:var(--red);">*</span></label>
+          <input type="number" id="invAddQty" placeholder="Enter quantity..." min="1" class="input-in" style="width:100%;">
+        </div>
+        <div style="position:relative;">
+          <label>MFG Month <span style="color:var(--red);">*</span></label>
+          <input type="text" id="invAddMfg" placeholder="e.g. Jun26, Jun25..." class="input-in" style="width:100%; text-transform:uppercase;" onclick="invShowAddMfgDrop(this)" oninput="invShowAddMfgDrop(this)">
+          <div id="invAddMfgDrop" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000; box-shadow:0 4px 6px rgba(0,0,0,0.1);"></div>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:flex-end;">
+        <button class="btn btn-p" onclick="invSubmitManualAddStock()" style="min-width:160px; height:38px;">&#x2795; ADD STOCK TO BIN</button>
+      </div>
+    </div>
+
+    <!-- SECTION B: LESS / EDIT BIN STOCK -->
+    <div id="invLessStockSection" style="display:none; background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:16px;">
+      <div class="section-title" style="margin-top:0; margin-bottom:12px;">&#x1F50D; Select BIN to View &amp; Adjust Stock</div>
+      <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:16px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:220px; position:relative;">
+          <label>Select BIN Number</label>
+          <input type="text" id="invLessBin" placeholder="Type or select BIN..." class="input-in" style="width:100%; text-transform:uppercase;" onclick="invShowLessBinDrop(this)" oninput="invShowLessBinDrop(this)">
+          <div id="invLessBinDrop" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000; box-shadow:0 4px 6px rgba(0,0,0,0.1);"></div>
+        </div>
+        <button class="btn btn-p" onclick="invLoadBinStockDetails()" style="height:36px;">&#x1F50D; Load BIN Stock</button>
+      </div>
+      <div id="invLessStockContainer" style="overflow-x:auto;">
+        <div style="color:var(--sub); text-align:center; padding:20px;">Select a BIN above and click "Load BIN Stock" to inspect and adjust available items.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 29: CREATE CYCLE COUNT INSTRUCTION (CCI) -->
+<div class="pg" id="pg29">
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;">&#x1F4CB; Create Cycle Count Instruction (CCI)</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:2px;">Select movement date/time range to generate a physical count audit sheet for touched bins.</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:14px; margin-bottom:16px;">
+      <div class="section-title" style="margin-top:0; margin-bottom:10px;">&#x1F552; Select Movement Date &amp; Time Range</div>
+      <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+        <div style="flex:1; min-width:220px;">
+          <label>From Date &amp; Time</label>
+          <input type="datetime-local" id="cciDateFrom29" class="input-in" style="width:100%;">
+        </div>
+        <div style="flex:1; min-width:220px;">
+          <label>To Date &amp; Time</label>
+          <input type="datetime-local" id="cciDateTo29" class="input-in" style="width:100%;">
+        </div>
+        <button class="btn btn-p" onclick="cciCreateInstruction29()" style="height:36px; min-width:200px;">&#x1F4CB; Create CCI Instruction</button>
+      </div>
+    </div>
+    <div id="cciResultSection29" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <div style="font-weight:700; font-size:14px;" id="cciHeaderTitle29">Generated CCI Instruction Details</div>
+        <button class="btn btn-g" onclick="cciPrintInstruction29()" style="height:32px;">&#x1F5A8; Print CCI Audit Sheet</button>
+      </div>
+      <div id="cciPrintableArea29" style="overflow-x:auto;">
+        <table class="tbl" style="min-width:1000px;">
+          <thead><tr>
+            <th style="width:50px; text-align:center;">Sr.No</th>
+            <th>BIN Number</th><th>SKU Code</th><th>Description</th>
+            <th style="text-align:center;">MFG</th>
+            <th style="text-align:right;">System Qty</th>
+            <th style="text-align:center; width:130px;">MFG if Change</th>
+            <th style="text-align:center; width:120px;">Qty if Change</th>
+            <th>Remark</th>
+          </tr></thead>
+          <tbody id="cciTableBody29"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 30: CONFIRM CYCLE COUNT INSTRUCTION (CCI) -->
+<div class="pg" id="pg30">
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;">&#x2705; Confirm Cycle Count Instruction (CCI)</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:2px;">Audit counted stock, submit variances, update inventory, and trigger discrepancy email alerts.</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:14px; margin-bottom:16px;">
+      <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+        <div style="flex:1; min-width:240px;">
+          <label>Select Pending CCI Instruction</label>
+          <select id="cciSelectPending30" class="select-in" style="width:100%;" onchange="cciOnPendingSelect30()">
+            <option value="">-- Select Pending CCI --</option>
+          </select>
+        </div>
+        <button class="btn btn-p" onclick="cciLoadPendingList30()" style="height:36px;">&#x1F504; Refresh CCI List</button>
+      </div>
+    </div>
+    <div id="cciConfirmSection30" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <div style="font-weight:700;" id="cciConfirmTitle30">CCI Details</div>
+        <button class="btn" onclick="cciSubmitConfirmation30()" id="cciConfirmSubmitBtn30" style="background:#10b981; color:#fff; font-weight:700; height:36px; min-width:180px;">&#x2705; Confirm CCI &amp; Email</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="tbl" style="min-width:1100px;">
+          <thead><tr>
+            <th style="width:50px; text-align:center;">Sr.No</th>
+            <th>BIN Number</th><th>SKU Code</th><th>Description</th>
+            <th style="text-align:center;">System MFG</th>
+            <th style="text-align:right;">System Qty</th>
+            <th style="width:140px; text-align:center;">MFG if Change</th>
+            <th style="width:120px; text-align:center;">Qty if Change</th>
+            <th>Remark</th>
+          </tr></thead>
+          <tbody id="cciConfirmTableBody30"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 31: PHYSICAL STOCK REPORT SUB-MODULE -->
+<div class="pg" id="pg31">
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;">&#x1F4CA; Physical Stock Report Overview</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:2px;">Multi-parameter stock search with Bin-Wise and Pivoted (For Sale) Excel exports.</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:14px; margin-bottom:16px;">
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:10px;">
+        <div style="position:relative;">
+          <label>BIN</label>
+          <input type="text" id="phyRepBin31" placeholder="Search BIN..." class="input-in" style="width:100%; text-transform:uppercase;" onclick="phyShowBinDrop31(this)" oninput="phyShowBinDrop31(this)">
+          <div id="phyRepBinDrop31" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000;"></div>
+        </div>
+        <div style="position:relative;">
+          <label>MFG Month</label>
+          <input type="text" id="phyRepMfg31" placeholder="Search MFG..." class="input-in" style="width:100%; text-transform:uppercase;" onclick="phyShowMfgDrop31(this)" oninput="phyShowMfgDrop31(this)">
+          <div id="phyRepMfgDrop31" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000;"></div>
+        </div>
+        <div style="position:relative;">
+          <label>SKU Code</label>
+          <input type="text" id="phyRepSku31" placeholder="Search SKU..." class="input-in" style="width:100%; text-transform:uppercase;" onclick="phyOnSkuInput31(this)" oninput="phyOnSkuInput31(this)">
+          <div id="phyRepSkuDrop31" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000;"></div>
+        </div>
+        <div style="position:relative;">
+          <label>Description</label>
+          <input type="text" id="phyRepDesc31" placeholder="Search Description..." class="input-in" style="width:100%;" onclick="phyOnDescInput31(this)" oninput="phyOnDescInput31(this)">
+          <div id="phyRepDescDrop31" class="dropdown-list" style="display:none; position:absolute; left:0; right:0; top:100%; max-height:160px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000;"></div>
+        </div>
+        <div>
+          <label>Plant / Warehouse</label>
+          <select id="phyRepPlant31" class="select-in" style="width:100%; height:36px;">
+            <option value="All">All Plants</option>
+            <option value="BB04" selected>BB04 - Lakhowal Warehouse</option>
+            <option value="BB02">BB02 - Factory FG Warehouse</option>
+            <option value="BB11">BB11 - Ghaziabad Warehouse</option>
+            <option value="BB12">BB12 - Export Warehouse</option>
+            <option value="BB13">BB13 - Jammu Warehouse</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-p" onclick="phyApplyFilters31()" style="height:36px;">&#x1F50D; Apply Filters</button>
+        <button class="btn btn-ghost" onclick="phyResetFilters31()" style="height:36px;">&#x1F5D1; Reset</button>
+      </div>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+      <div style="font-weight:700;" id="phyRepCount31">Loading physical stock overview...</div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn btn-g" onclick="phyExportBinWise31()" style="height:32px;">&#x1F4E5; Export Bin Wise Stock</button>
+        <button class="btn btn-p" onclick="phyExportPivoted31()" style="height:32px; background:#d97706; border-color:#b45309; color:#fff;">&#x1F4CA; Export Pivoted (For Sale)</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="tbl" style="min-width:900px;">
+        <thead><tr>
+          <th>Plant</th><th>BIN Number</th><th>SKU Code</th><th>Description</th>
+          <th style="text-align:center;">MFG Month</th>
+          <th style="text-align:right;">Physical Qty</th>
+        </tr></thead>
+        <tbody id="phyRepTableBody31"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 32: PARTY MASTER SUB-MODULE -->
+<div class="pg" id="pg32">
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;">&#x1F465; Party Master Management</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:2px;">Maintain Contractors, Loading Supervisors, Transporters, and GST Numbers.</div>
+      </div>
+      <button class="btn btn-ghost" onclick="loadPartyMasterPage32()" style="padding:6px 12px; font-size:12px;">&#x1F504; Refresh Party Master</button>
+    </div>
+    <div class="divider"></div>
+    <div class="grid2">
+      <div>
+        <h4 style="margin-bottom:10px;">Add New Party Master Record</h4>
+        <input type="hidden" id="partyRowIndex32" value="">
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div><label>Contractor Name</label><input type="text" id="partyContractor32" placeholder="e.g. M/S RAMESH LOGISTICS" class="input-in" style="width:100%;"></div>
+          <div><label>Loading Supervisor Name</label><input type="text" id="partySupervisor32" placeholder="e.g. Vikas Sharma" class="input-in" style="width:100%;"></div>
+          <div><label>Transporter Name</label><input type="text" id="partyTransporter32" placeholder="e.g. VRL Logistics Ltd" class="input-in" style="width:100%;"></div>
+          <div><label>GST Number</label><input type="text" id="partyGst32" placeholder="e.g. 07AAAAA0000A1Z5" class="input-in" style="width:100%;"></div>
+          <button class="btn btn-p" onclick="savePartyMaster32()" style="margin-top:8px; height:36px; font-weight:700;">+ Save Party Record</button>
+        </div>
+      </div>
+      <div>
+        <h4 style="margin-bottom:10px;">Registered Party Records</h4>
+        <input type="text" placeholder="&#x1F50D; Search party..." oninput="filterPartyMasterTable32()" id="partySearchInp32" class="input-in" style="width:100%; height:32px; margin-bottom:8px;">
+        <div style="overflow-x:auto; max-height:420px; overflow-y:auto;">
+          <table class="tbl" style="width:100%;">
+            <thead><tr>
+              <th>Contractor</th><th>Supervisor</th><th>Transporter</th><th>GST</th>
+              <th style="width:90px; text-align:center;">Action</th>
+            </tr></thead>
+            <tbody id="partyTableBody32"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 33: MAIL ID MASTER SUB-MODULE -->
+<div class="pg" id="pg33">
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;">&#x1F4E7; Mail ID Master Configuration</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:2px;">Configure TO &amp; CC email recipient lists for Short/Excess alerts, Remark Trail, and CCI Discrepancy Reports.</div>
+      </div>
+      <button class="btn btn-ghost" onclick="loadMailMasterPage33()" style="padding:6px 12px; font-size:12px;">&#x1F504; Refresh Mail Master</button>
+    </div>
+    <div class="divider"></div>
+    <div class="grid2">
+      <div>
+        <h4 style="margin-bottom:10px;">Register Email Recipient</h4>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div><label>Email Address</label><input type="email" id="mailIdAddr33" placeholder="e.g. manager@bonn.in" class="input-in" style="width:100%;"></div>
+          <div>
+            <label>Short / Excess Mail Role</label>
+            <select id="mailIdShortExcess33" class="select-in" style="width:100%;">
+              <option value="TO">TO (Direct Recipient)</option>
+              <option value="CC">CC (Carbon Copy)</option>
+              <option value="OFF">OFF (Disabled)</option>
+            </select>
+          </div>
+          <div>
+            <label>Remark Trail Mail Role</label>
+            <select id="mailIdRemarkTrail33" class="select-in" style="width:100%;">
+              <option value="TO">TO (Direct Recipient)</option>
+              <option value="CC">CC (Carbon Copy)</option>
+              <option value="OFF">OFF (Disabled)</option>
+            </select>
+          </div>
+          <div>
+            <label>CCI Discrepancy Report Role</label>
+            <select id="mailIdCci33" class="select-in" style="width:100%;">
+              <option value="TO">TO (Direct Recipient)</option>
+              <option value="CC">CC (Carbon Copy)</option>
+              <option value="OFF">OFF (Disabled)</option>
+            </select>
+          </div>
+          <button class="btn btn-p" onclick="saveMailMaster33()" style="margin-top:8px; height:36px; font-weight:700;">+ Save Email Recipient</button>
+        </div>
+      </div>
+      <div>
+        <h4 style="margin-bottom:10px;">Active Mail Recipients</h4>
+        <div style="overflow-x:auto; max-height:420px; overflow-y:auto;">
+          <table class="tbl" style="width:100%;">
+            <thead><tr>
+              <th>Email ID</th>
+              <th style="text-align:center;">Short/Excess</th>
+              <th style="text-align:center;">Remark Trail</th>
+              <th style="text-align:center;">CCI Mail</th>
+              <th style="width:80px; text-align:center;">Action</th>
+            </tr></thead>
+            <tbody id="mailTableBody33"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>

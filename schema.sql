@@ -340,6 +340,43 @@ CREATE TABLE IF NOT EXISTS asn (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 20. CCI (Cycle Count Instruction)
+CREATE TABLE IF NOT EXISTS cci (
+    id SERIAL PRIMARY KEY,
+    cci_id TEXT NOT NULL,
+    created_at TEXT,
+    date_from TEXT,
+    date_to TEXT,
+    warehouse TEXT,
+    bin TEXT,
+    sku_code TEXT,
+    description TEXT,
+    mfg_month TEXT,
+    sys_qty NUMERIC(10,2) DEFAULT 0,
+    audited_mfg TEXT,
+    audited_qty NUMERIC(10,2),
+    variance_qty NUMERIC(10,2),
+    remark TEXT,
+    status TEXT DEFAULT 'CREATED',
+    created_by TEXT,
+    confirmed_by TEXT,
+    confirmed_date TEXT
+);
+
+-- 21. ACTIVITY_LOG
+CREATE TABLE IF NOT EXISTS activity_log (
+    id SERIAL PRIMARY KEY,
+    timestamp TEXT,
+    user_id TEXT,
+    action TEXT,
+    details TEXT,
+    ip_address TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add cci_mail column to mail_masters if not present
+ALTER TABLE mail_masters ADD COLUMN IF NOT EXISTS cci_mail TEXT DEFAULT 'NO';
+
 -- Indexes for lightning fast lookups
 CREATE INDEX IF NOT EXISTS idx_op_status ON operation_sheet(status);
 CREATE INDEX IF NOT EXISTS idx_op_plant ON operation_sheet(plant);
@@ -347,3 +384,6 @@ CREATE INDEX IF NOT EXISTS idx_alloc_order ON phy_stk_allocation(order_no);
 CREATE INDEX IF NOT EXISTS idx_stk_sku_bin ON phy_stk_entry(sku_code, bin_no);
 CREATE INDEX IF NOT EXISTS idx_dump_mat ON sap_stk_dump(material_code, warehouse);
 CREATE INDEX IF NOT EXISTS idx_asn_no ON asn(asn_no);
+CREATE INDEX IF NOT EXISTS idx_cci_id ON cci(cci_id);
+CREATE INDEX IF NOT EXISTS idx_actlog_user ON activity_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_inward_obd ON inward_mis(obd_mat_doc);
