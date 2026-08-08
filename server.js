@@ -2905,6 +2905,9 @@ app.post('/api/gas-bridge', async (req, res) => {
             [Number(r.shortage_qty)||0, r.alloc_remark||'', r.shortage_remark||'', new Date().toISOString(), soNorm]);
           updatedCount++;
         }
+        return res.json({ success: true, result: { status: 'SUCCESS', updatedCount, message: `Refreshed ${updatedCount} operation sheet rows from order checker.` } });
+      }
+
       case 'opGetOutwardReportData': {
         const [warehouse, filters = {}] = args;
         const whNorm = _norm(filters.warehouse || warehouse || "BB04");
