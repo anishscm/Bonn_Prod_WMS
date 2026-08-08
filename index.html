@@ -14919,27 +14919,6 @@ function opUpdateSummaryStats24() {
   if (statDispatchQty) statDispatchQty.textContent = Math.round(totalDispatchQty).toLocaleString();
   if (statShortageQty) statShortageQty.textContent = Math.round(totalShortageQty).toLocaleString();
 }
-      var rowText = (row || []).join(' ').toLowerCase();
-      if (rowText.indexOf(globalQuery) === -1) {
-        return false;
-      }
-    }
-
-    // 2. Column-specific Dropdown Popover Filters
-    for (var fName in opFilters24) {
-      var colIdx = opHeaders24.indexOf(fName);
-      if (colIdx >= 0) {
-        var val = String(row[colIdx] || '').trim();
-        var allowedVals = opFilters24[fName];
-        if (allowedVals && allowedVals.size > 0 && !allowedVals.has(val)) {
-          return false;
-        }
-      }
-    }
-    return true;
-  });
-  opRenderGrid();
-}
 
 function opRenderGrid() {
   var thead = document.getElementById('opTableHead24');
