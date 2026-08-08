@@ -1463,26 +1463,60 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
 <!-- PAGE 4: ALLOCATION -->
 <div class="pg" id="pg4">
   <div class="card">
-    <div style="font-size:15px;font-weight:700;margin-bottom:4px;">&#x1F512; Allocation View</div>
-    <div style="font-size:12px;color:var(--sub);margin-bottom:14px;">Inhand &amp; Transit allocations shown separately.</div>
-    <div class="section-title">Search by Item Code</div>
-    <div style="display:flex;gap:8px;align-items:flex-end;">
-      <input type="text" id="skuIn" placeholder="e.g. AC138" style="flex:1;text-transform:uppercase;font-weight:700;" onkeydown="if(event.key==='Enter')searchSku()">
-      <button class="btn btn-p" id="skuSearchBtn" onclick="searchSku()" style="flex-shrink:0;min-width:90px;"><span id="skuTxt">Search</span></button>
-    </div>
-    <div id="skuResult" style="margin-top:12px;"></div>
-    <hr class="divider">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-      <div class="section-title" style="margin:0;">All Allocated Items</div>
-      <div style="display:flex;gap:6px;">
-        <button class="btn btn-p" onclick="loadAlloc()" id="alRefBtn" style="padding:6px 12px;font-size:12px;"><span id="alRefTxt">&#x1F504; Refresh</span></button>
-        <button class="btn btn-g" onclick="exportAllocationExcel()" id="alExportBtn" style="padding:6px 12px;font-size:12px;">📊 Export Excel</button>
-        <button class="btn btn-r" id="resetAllocBtn" style="display:none;padding:6px 12px;font-size:12px;" onclick="resetAlloc()">&#x1F5D1; Reset All</button>
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+      <div>
+        <div style="font-size:16px; font-weight:800; color:var(--p);">&#x1F512; Allocation View</div>
+        <div style="font-size:12px; color:var(--sub); margin-top:2px;">Compare SAP Stock Allocations vs Physical Bin Stock Allocations</div>
+      </div>
+      <!-- Tab Navigation Switcher -->
+      <div style="display:flex; background:var(--bg-input, rgba(15,23,42,0.4)); border:1px solid var(--bdr); border-radius:8px; padding:3px; gap:4px;">
+        <button class="btn btn-p alloc-tab-btn" id="btnAllocTabSAP" onclick="switchAllocTab('SAP')" style="font-size:12px; padding:6px 14px; border-radius:6px; font-weight:700;">
+          📊 SAP Stock Allocation
+        </button>
+        <button class="btn btn-ghost alloc-tab-btn" id="btnAllocTabPhysical" onclick="switchAllocTab('PHYSICAL')" style="font-size:12px; padding:6px 14px; border-radius:6px; font-weight:700;">
+          📦 Physical Stock Allocation
+        </button>
       </div>
     </div>
-    <div class="prog" id="alp"><div class="prog-bar" id="alb"></div></div>
-    <div id="alMsg"></div>
-    <div id="alList" style="margin-top:10px;"></div>
+
+    <!-- TAB 1: SAP STOCK ALLOCATION -->
+    <div id="allocTabContentSAP">
+      <div class="section-title">Search by Item Code</div>
+      <div style="display:flex;gap:8px;align-items:flex-end;">
+        <input type="text" id="skuIn" placeholder="e.g. AC138" style="flex:1;text-transform:uppercase;font-weight:700;" onkeydown="if(event.key==='Enter')searchSku()">
+        <button class="btn btn-p" id="skuSearchBtn" onclick="searchSku()" style="flex-shrink:0;min-width:90px;"><span id="skuTxt">Search</span></button>
+      </div>
+      <div id="skuResult" style="margin-top:12px;"></div>
+      <hr class="divider">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div class="section-title" style="margin:0;">All SAP Allocated Items</div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-p" onclick="loadAlloc()" id="alRefBtn" style="padding:6px 12px;font-size:12px;"><span id="alRefTxt">&#x1F504; Refresh</span></button>
+          <button class="btn btn-g" onclick="exportAllocationExcel()" id="alExportBtn" style="padding:6px 12px;font-size:12px;">📊 Export Excel</button>
+          <button class="btn btn-r" id="resetAllocBtn" style="display:none;padding:6px 12px;font-size:12px;" onclick="resetAlloc()">&#x1F5D1; Reset All</button>
+        </div>
+      </div>
+      <div class="prog" id="alp"><div class="prog-bar" id="alb"></div></div>
+      <div id="alMsg"></div>
+      <div id="alList" style="margin-top:10px;"></div>
+    </div>
+
+    <!-- TAB 2: PHYSICAL STOCK ALLOCATION -->
+    <div id="allocTabContentPhysical" style="display:none;">
+      <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+        <div style="display:flex; gap:10px; flex:1; max-width:400px;">
+          <input type="text" id="phyAllocSearchInput" placeholder="Filter SKU Code or Description..." style="font-size:12px; margin:0;" oninput="filterPhysicalAllocTable()">
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-p" onclick="loadPhysicalAlloc()" id="phyAlRefBtn" style="padding:6px 12px; font-size:12px;"><span id="phyAlRefTxt">&#x1F504; Refresh</span></button>
+          <button class="btn btn-g" onclick="exportPhysicalAllocExcel()" id="phyAlExportBtn" style="padding:6px 12px; font-size:12px;">📊 Export Excel</button>
+        </div>
+      </div>
+      <div class="prog" id="phyAlp"><div class="prog-bar" id="phyAlb"></div></div>
+      <div id="phyAlMsg"></div>
+      <div id="phyAlSummary" style="margin-bottom:12px;"></div>
+      <div id="phyAlList" style="margin-top:10px;"></div>
+    </div>
   </div>
 </div>
 
@@ -1878,27 +1912,71 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
   </div>
 </div>
 
-<!-- PAGE 10: USER AUTHORIZATIONS -->
+<!-- PAGE 10: USER AUTHORIZATION & ACCESS CONTROL -->
 <div class="pg" id="pg10">
-  <div class="card">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
-      <div>
-        <div style="font-size:15px;font-weight:700;">&#x1F512; User Authorizations</div>
-        <div style="font-size:12px;color:var(--sub);margin-top:2px;">Manage user logins, passwords, assigned warehouses, and access rights.</div>
+  <div style="display:grid; grid-template-columns: 340px 1fr; gap:16px;">
+    
+    <!-- LEFT SIDE: NEW USER TAB & USERS DIRECTORY -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      
+      <!-- Create New User Card -->
+      <div class="card" style="padding:16px;">
+        <div style="font-weight:700; font-size:14px; margin-bottom:10px; display:flex; align-items:center; gap:6px;">
+          <span>&#x2795;</span> Create New User
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div>
+            <label style="font-size:11px; font-weight:600; color:var(--sub);">User ID (Login)</label>
+            <input type="text" id="authNewUserId" placeholder="e.g. supervisor2" class="input-in" style="width:100%; height:34px;">
+          </div>
+          <div>
+            <label style="font-size:11px; font-weight:600; color:var(--sub);">Full Name</label>
+            <input type="text" id="authNewUserName" placeholder="e.g. Amit Kumar" class="input-in" style="width:100%; height:34px;">
+          </div>
+          <div>
+            <label style="font-size:11px; font-weight:600; color:var(--sub);">Password</label>
+            <input type="text" id="authNewUserPass" placeholder="Enter password" class="input-in" style="width:100%; height:34px;">
+          </div>
+          <div>
+            <label style="font-size:11px; font-weight:600; color:var(--sub);">Assigned Warehouses</label>
+            <input type="text" id="authNewUserWh" placeholder="e.g. BB04, BB02 (or * for All)" value="*" class="input-in" style="width:100%; height:34px;">
+          </div>
+          <button class="btn btn-p" onclick="authCreateNewUser()" style="margin-top:4px; height:36px; font-weight:700;">+ Create User</button>
+        </div>
       </div>
-      <button class="btn btn-p" onclick="saveAllUserAuths()" style="padding:6px 12px;font-size:12px;">&#x1F4BE; Save All Permissions</button>
+
+      <!-- Registered Users Directory -->
+      <div class="card" style="padding:16px; flex:1;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <div style="font-weight:700; font-size:14px;">&#x1F465; Select User to Edit</div>
+          <button class="btn btn-ghost" onclick="loadUserAuthPage()" style="padding:2px 8px; font-size:11px;">&#x1F504; Refresh</button>
+        </div>
+        <input type="text" id="authUserSearchInp" placeholder="&#x1F50D; Search users..." oninput="authFilterUsersList()" class="input-in" style="width:100%; height:32px; margin-bottom:10px;">
+        <div id="authUsersListContainer" style="max-height:480px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">
+          <div style="text-align:center; padding:20px; color:var(--sub);">&#x23F3; Loading users...</div>
+        </div>
+      </div>
     </div>
-    <div class="divider"></div>
-    <div style="overflow-x:auto;">
-      <table class="user-auth-table" style="width:100%; min-width:800px;">
-        <thead id="pg10UserAuthHead"></thead>
-        <tbody id="pg10UserAuthBody"></tbody>
-      </table>
+
+    <!-- RIGHT SIDE: PERMISSIONS EDITOR FOR SELECTED USER -->
+    <div class="card" style="padding:18px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px; border-bottom:1px solid var(--bdr); padding-bottom:10px;">
+        <div>
+          <div style="font-size:16px; font-weight:800; color:var(--tx);" id="authActiveUserTitle">Editing Permissions: Select a User</div>
+          <div style="font-size:12px; color:var(--sub);" id="authActiveUserSub">Click any user on the left side to load &amp; edit their module permissions.</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-ghost" onclick="authGrantAll(true)" style="padding:6px 10px; font-size:12px; background:#f0fdf4; color:#16a34a;">&#x2705; Select All ON</button>
+          <button class="btn btn-ghost" onclick="authGrantAll(false)" style="padding:6px 10px; font-size:12px; background:#fef2f2; color:#dc2626;">&#x274C; Select All OFF</button>
+          <button class="btn btn-p" onclick="authSaveSelectedUser()" id="authSaveBtn" style="padding:7px 16px; font-size:13px; font-weight:700; background:#10b981;">&#x1F4BE; Save Authorizations</button>
+        </div>
+      </div>
+
+      <!-- Module & Sub-Module Toggles Panel -->
+      <div id="authPermissionsGrid" style="max-height:640px; overflow-y:auto; padding-right:6px; display:flex; flex-direction:column; gap:16px;">
+        <!-- Dynamically rendered modules with ON/OFF switches -->
+      </div>
     </div>
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
-      <button class="btn btn-ghost" onclick="addUserRow()">+ Add User ID Row</button>
-    </div>
-    <div id="pg10UserAuthMsg" style="margin-top:8px;"></div>
   </div>
 </div>
 
@@ -2477,6 +2555,24 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
     </div>
     <div class="divider"></div>
 
+    <!-- Inbound Report KPI Dashboard Cards -->
+    <div id="iwRepDashboard23" style="margin-bottom:16px;">
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
+        <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:12px 16px; border-left:4px solid var(--p); box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+          <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">&#x1F69A; Total Vehicles</div>
+          <div style="font-size:22px; font-weight:800; color:var(--tx); margin-top:2px;" id="iwKpiVehicles23">0</div>
+        </div>
+        <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:12px 16px; border-left:4px solid #16a34a; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+          <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">&#x1F4E6; Total Quantity (Boxes)</div>
+          <div style="font-size:22px; font-weight:800; color:#16a34a; margin-top:2px;" id="iwKpiTotalQty23">0</div>
+        </div>
+        <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:12px 16px; border-left:4px solid #d97706; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+          <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">&#x1F4D3; Unique SKUs</div>
+          <div style="font-size:22px; font-weight:800; color:#d97706; margin-top:2px;" id="iwKpiSkus23">0</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Filters Panel -->
     <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:14px; margin-bottom:16px;">
       <div class="section-title" style="margin-top:0; margin-bottom:10px;">&#x1F4CA; Report Filter Options</div>
@@ -2649,6 +2745,38 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
       </div>
     </div>
     
+    <!-- Dedicated Universal Search Bar & Status Filter Bar -->
+    <div style="margin-bottom:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:color-mix(in srgb, var(--p) 5%, var(--card-bg)); border:1.5px solid color-mix(in srgb, var(--p) 30%, var(--bdr)); border-radius:8px; padding:8px 14px;">
+      <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+        <label style="font-size:12px; font-weight:700; color:var(--p); white-space:nowrap; display:flex; align-items:center; gap:4px;">
+          <span>&#x1F4CB;</span> Status:
+        </label>
+        <select id="opStatusFilter24" class="select-in" style="height:34px; width:195px; padding:0 8px; font-size:12px; font-weight:700; border-radius:6px; border:1px solid var(--bdr); background:var(--card-bg); color:var(--tx); cursor:pointer;" onchange="opOnStatusFilterChange24()">
+          <option value="Pending" selected>&#x23F3; Pending Orders (Default)</option>
+          <option value="Picking">&#x1F4E6; Picking Status</option>
+          <option value="Dispatched">&#x1F69A; Confirmed / Dispatched</option>
+          <option value="PGI Done">&#x1F504; PGI Done</option>
+          <option value="All">&#x1F310; All Orders (No Filter)</option>
+        </select>
+      </div>
+
+      <!-- Loading Date Range Filter (Inline when Confirmed / Dispatched is selected) -->
+      <div id="opDispatchDateContainer24" style="display:none; align-items:center; gap:6px; background:rgba(2, 132, 199, 0.08); padding:2px 8px; border-radius:6px; border:1px solid rgba(2, 132, 199, 0.3); flex-shrink:0;">
+        <span style="font-size:11.5px; font-weight:700; color:#0284c7; white-space:nowrap; display:flex; align-items:center; gap:3px;">
+          <span>&#x1F4C5;</span> Date:
+        </span>
+        <input type="date" id="opDispatchFromDate24" class="input-in" style="height:30px; width:125px; padding:0 4px; font-size:11.5px; font-weight:600; border-radius:4px; border:1px solid var(--bdr); background:var(--card-bg); color:var(--tx);" onchange="opApplyFilters()" title="From Date">
+        <span style="font-size:11px; color:var(--sub); font-weight:600;">-</span>
+        <input type="date" id="opDispatchToDate24" class="input-in" style="height:30px; width:125px; padding:0 4px; font-size:11.5px; font-weight:600; border-radius:4px; border:1px solid var(--bdr); background:var(--card-bg); color:var(--tx);" onchange="opApplyFilters()" title="To Date">
+        <button class="btn" style="height:26px; padding:0 6px; font-size:10.5px; font-weight:700; background:#64748b; color:#fff; border-radius:4px;" onclick="opClearDispatchDate24()" title="Clear date filter">&#x2715;</button>
+      </div>
+
+      <div style="flex:1; min-width:200px; position:relative; display:flex; align-items:center;">
+        <input type="text" id="opUniversalSearch24" class="input-in" style="width:100%; height:36px; padding-left:14px; padding-right:32px; font-size:13px; font-weight:600; border-radius:6px; border:1px solid var(--bdr); background:var(--card-bg); color:var(--tx);" placeholder="Type any keyword to filter (SO #, Customer, Ref, Vehicle No, Driver, TPT Name, Status, Shift...)" oninput="opOnUniversalSearch24(this.value)">
+        <button id="opClearSearchBtn24" onclick="opClearUniversalSearch24()" style="display:none; position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--sub); font-size:15px; font-weight:bold; cursor:pointer; padding:2px 6px;" title="Clear search">&#x2715;</button>
+      </div>
+    </div>
+
     <!-- Excel-like Table Wrapper -->
     <div style="overflow:auto; max-height:550px; border:1px solid var(--bdr); border-radius:6px; background:var(--bg-card);">
       <table class="tbl" style="min-width:3200px; border-collapse:collapse;" id="opExcelTable24">
@@ -2795,6 +2923,11 @@ html[data-accent="teal"] .bg-wallpaper-svg .pattern-teal {
 
         <button class="btn btn-ghost" onclick="opLoadPage27()" style="height:36px; padding:0 14px; border:1px solid var(--bdr); border-radius:8px;">
           🔄 Refresh
+        </button>
+
+        <button class="btn" id="opReprintPickListBtn27" onclick="opTriggerReprintPickList27()" disabled 
+                style="height:36px; padding:0 14px; font-weight:700; border-radius:8px; display:flex; align-items:center; gap:6px; background:#2563eb; color:#fff; border:none; cursor:pointer;">
+          <span>&#x1F5A8;</span> Reprint Pick List
         </button>
 
         <button class="btn btn-primary" id="opConfirmBtn27" onclick="opTriggerConfirmOrder27()" disabled 
@@ -3855,6 +3988,7 @@ var subOptions = {
     { name: "Operation Sheet", icon: "&#x1F4D2;", desc: "Track sales order operations, shortages, and transport.", authKey: "Sales_OrderChecker", tabIndex: 24 },
     { name: "Create Outbound instruction", icon: "&#x1F4E4;", desc: "Generate and print pick lists for PGI Done orders.", authKey: "Sales_OrderChecker", tabIndex: 25 },
     { name: "Confirm Outbound instruction", icon: "&#x2705;", desc: "Confirm picking orders, transport details, and deduct stock.", authKey: "Sales_OrderChecker", tabIndex: 27 },
+    { name: "Outward Report", icon: "&#x1F4CA;", desc: "View and export filtered outward dispatch and tracking reports.", authKey: "Sales_OutwardReport", tabIndex: 34 },
     { name: "Reset Sales Data", icon: "&#x1F5D1;", desc: "Wipe all sales transactions and allocations.", authKey: "Admin_ResetData", action: "RESET_SALES" }
   ],
   "Receipts": [
@@ -4319,123 +4453,267 @@ function onDump(r){
 
 
 
-/* USER AUTHORIZATION EDITOR */
-function loadUserAuthPage(){
-  if(!isAdmin){alert("Admin only.");return;}
-  document.getElementById("pg10UserAuthMsg").innerHTML = "";
-  var head = document.getElementById("pg10UserAuthHead");
-  var body = document.getElementById("pg10UserAuthBody");
-  head.innerHTML = "<tr><th>Loading...</th></tr>";
-  body.innerHTML = "";
-  
+/* =========================================================================
+   ADMINISTRATION & USER AUTHORIZATION REDESIGN (PAGE 10)
+   ========================================================================= */
+
+var authUsersData = [];       // Array of user objects fetched from USER_AUTH sheet
+var authSelectedUserId = "";  // Currently selected User ID for editing
+var authPermissionKeys = [
+  // Sales / Outbound
+  { key: "Sales_StkDump", label: "STK Dump Upload", module: "Sales / Outbound" },
+  { key: "Sales_OrderChecker", label: "Order Checker / Allocate", module: "Sales / Outbound" },
+  { key: "Sales_ShortageChecker", label: "Shortage Checker Report", module: "Sales / Outbound" },
+  { key: "Sales_AllocationView", label: "Allocation View", module: "Sales / Outbound" },
+  { key: "Sales_OperationSheet", label: "Operation Sheet", module: "Sales / Outbound" },
+  { key: "Sales_CreateOutbound", label: "Create Outbound Instruction", module: "Sales / Outbound" },
+  { key: "Sales_ConfirmOutbound", label: "Confirm Outbound / Dispatch", module: "Sales / Outbound" },
+  { key: "Admin_ResetData", label: "Reset Sales Data Action", module: "Sales / Outbound" },
+
+  // Inbound / Receipts
+  { key: "Receipts_ASN", label: "ASN Creation / Unloading MIS", module: "Inbound / Receipts" },
+  { key: "Receipts_CreateInbound", label: "Create Inbound Instruction", module: "Inbound / Receipts" },
+  { key: "Receipts_ConfirmInbound", label: "Confirm Inbound Instruction", module: "Inbound / Receipts" },
+  { key: "Receipts_InboundReport", label: "Inbound Report & Exports", module: "Inbound / Receipts" },
+
+  // Inventory
+  { key: "Inventory_Reconciliation", label: "Add / Less Bin Stock", module: "Inventory" },
+  { key: "Inventory_CreateCCI", label: "Create Cycle Count Instruction (CCI)", module: "Inventory" },
+  { key: "Inventory_ConfirmCCI", label: "Confirm CCI & Discrepancy Email", module: "Inventory" },
+  { key: "Inventory_Reports", label: "Physical Stock Report Overview", module: "Inventory" },
+
+  // Administration
+  { key: "Admin_UserAuth", label: "User Authorizations Management", module: "Administration" },
+  { key: "Admin_ActivityLog", label: "Activity & Audit Log", module: "Administration" },
+
+  // Setup
+  { key: "Setup_BinMaster", label: "BIN Master Management", module: "Setup" },
+  { key: "Setup_ProductMaster", label: "SKU Master Management", module: "Setup" },
+  { key: "Setup_PartyMaster", label: "Party Master Management", module: "Setup" },
+  { key: "Setup_MailMaster", label: "Mail ID Master Management", module: "Setup" }
+];
+
+function loadUserAuthPage() {
+  var listContainer = document.getElementById("authUsersListContainer");
+  if (listContainer) listContainer.innerHTML = '<div style="text-align:center; padding:20px; color:var(--sub);">&#x23F3; Loading users...</div>';
+
   google.script.run
-    .withSuccessHandler(function(res){
-      if(res && res.status === "SUCCESS"){
-        usersList = res.users;
-        usersHeaders = res.headers;
-        renderUserAuthTable();
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        authUsersData = res.users || [];
+        authRenderUsersList(authUsersData);
+        if (authUsersData.length > 0 && !authSelectedUserId) {
+          authSelectUser(authUsersData[0]["User ID"]);
+        } else if (authSelectedUserId) {
+          authSelectUser(authSelectedUserId);
+        }
       } else {
-        document.getElementById("pg10UserAuthMsg").innerHTML = '<div class="err-msg">Error: ' + (res?res.message:"No response") + '</div>';
+        if (listContainer) listContainer.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red);">&#x274C; ' + (res ? res.message : "Failed to load users.") + '</div>';
       }
     })
-    .withFailureHandler(function(err){
-      document.getElementById("pg10UserAuthMsg").innerHTML = '<div class="err-msg">Error: ' + err.message + '</div>';
+    .withFailureHandler(function(err) {
+      if (listContainer) listContainer.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red);">&#x274C; Error: ' + err.message + '</div>';
     })
     .wmsGetUsers();
 }
 
-function renderUserAuthTable(){
-  var head = document.getElementById("pg10UserAuthHead");
-  var body = document.getElementById("pg10UserAuthBody");
-  if (!head || !body) return;
-  head.innerHTML = "";
-  body.innerHTML = "";
-  if(usersHeaders.length === 0) return;
-  var trHead = document.createElement("tr");
-  usersHeaders.forEach(function(h){
-    var th = document.createElement("th");
-    th.textContent = h;
-    trHead.appendChild(th);
+function authRenderUsersList(users) {
+  var container = document.getElementById("authUsersListContainer");
+  if (!container) return;
+  if (users.length === 0) {
+    container.innerHTML = '<div style="text-align:center; padding:15px; color:var(--sub);">No registered users found.</div>';
+    return;
+  }
+
+  container.innerHTML = users.map(function(u) {
+    var uid = u["User ID"] || "";
+    var name = u["Name"] || uid;
+    var wh = u["Assigned Warehouses"] || "*";
+    var isSel = (uid === authSelectedUserId);
+    var activeStyle = isSel ? "background:var(--p); color:#fff; border-color:var(--p);" : "background:var(--bg-card); color:var(--tx); border:1px solid var(--bdr);";
+    var subStyle = isSel ? "color:rgba(255,255,255,0.8);" : "color:var(--sub);";
+
+    return '<div onclick="authSelectUser(\'' + uid.replace(/'/g, "\\'") + '\')" style="padding:10px 12px; border-radius:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; transition:all 0.2s; ' + activeStyle + '">' +
+      '<div>' +
+        '<div style="font-weight:700; font-size:13px;">' + uid + ' <span style="font-weight:400; font-size:12px;">(' + name + ')</span></div>' +
+        '<div style="font-size:11px; margin-top:2px; ' + subStyle + '">WH: <strong>' + wh + '</strong></div>' +
+      '</div>' +
+      '<div style="font-size:16px;">' + (isSel ? '&#x2705;' : '&#x276F;') + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function authFilterUsersList() {
+  var q = (document.getElementById("authUserSearchInp").value || "").trim().toLowerCase();
+  var filtered = authUsersData.filter(function(u) {
+    var uid = (u["User ID"] || "").toLowerCase();
+    var name = (u["Name"] || "").toLowerCase();
+    return !q || uid.indexOf(q) !== -1 || name.indexOf(q) !== -1;
   });
-  var thAct = document.createElement("th");
-  thAct.textContent = "Actions";
-  trHead.appendChild(thAct);
-  head.appendChild(trHead);
-  
-  usersList.forEach(function(user, uIdx){
-    var tr = document.createElement("tr");
-    usersHeaders.forEach(function(h){
-      var td = document.createElement("td");
-      var val = user[h] || "";
-      if(h === "User ID"){
-        if(val.toLowerCase() === "admin"){
-          td.innerHTML = '<b class="row-mono">' + val + '</b>';
-        } else {
-          td.innerHTML = '<input type="text" value="' + val + '" onchange="updateUserVal(' + uIdx + ', \'' + h + '\', this.value)" style="width:75px;font-family:monospace;font-weight:700;padding:2px;">';
-        }
-      } else if(h === "Name"){
-        td.innerHTML = '<input type="text" value="' + val + '" onchange="updateUserVal(' + uIdx + ', \'' + h + '\', this.value)" style="width:110px;padding:2px;">';
-      } else if(h === "Password"){
-        td.innerHTML = '<input type="text" value="' + val + '" onchange="updateUserVal(' + uIdx + ', \'' + h + '\', this.value)" style="width:90px;padding:2px;">';
-      } else if(h === "Assigned Warehouses"){
-        td.innerHTML = '<input type="text" value="' + val + '" onchange="updateUserVal(' + uIdx + ', \'' + h + '\', this.value)" style="width:120px;padding:2px;" placeholder="e.g. BB04 or *">';
-      } else {
-        var yesChecked = (val.toString().trim().toUpperCase() === "YES");
-        td.innerHTML = 
-          '<select onchange="updateUserVal(' + uIdx + ', \'' + h + '\', this.value)" style="width:65px;padding:2px;">' +
-            '<option value="YES"' + (yesChecked ? ' selected' : '') + '>YES</option>' +
-            '<option value="NO"' + (!yesChecked ? ' selected' : '') + '>NO</option>' +
-          '</select>';
-      }
-      tr.appendChild(td);
+  authRenderUsersList(filtered);
+}
+
+function authSelectUser(userId) {
+  authSelectedUserId = userId;
+  authRenderUsersList(authUsersData);
+
+  var user = authUsersData.find(function(u) { return u["User ID"] === userId; });
+  var titleEl = document.getElementById("authActiveUserTitle");
+  var subEl = document.getElementById("authActiveUserSub");
+
+  if (!user) {
+    if (titleEl) titleEl.textContent = "User Not Found";
+    return;
+  }
+
+  if (titleEl) titleEl.innerHTML = 'Editing Permissions: <strong style="color:var(--p);">' + user["User ID"] + '</strong> <span style="font-size:13px; color:var(--sub);">(' + (user["Name"] || "") + ')</span>';
+  if (subEl) subEl.textContent = "Assigned Warehouses: " + (user["Assigned Warehouses"] || "*") + " | Password: " + (user["Password"] || "***");
+
+  authRenderPermissionsPanel(user);
+}
+
+function authRenderPermissionsPanel(user) {
+  var grid = document.getElementById("authPermissionsGrid");
+  if (!grid) return;
+
+  var isSystemAdmin = (user["User ID"] || "").trim().toLowerCase() === "admin";
+
+  var modulesMap = {};
+  authPermissionKeys.forEach(function(item) {
+    if (!modulesMap[item.module]) modulesMap[item.module] = [];
+    modulesMap[item.module].push(item);
+  });
+
+  var html = "";
+  Object.keys(modulesMap).forEach(function(modName) {
+    html += '<div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:10px; padding:14px;">' +
+      '<div style="font-size:14px; font-weight:800; color:var(--tx); margin-bottom:10px; border-bottom:1px solid var(--bdr); padding-bottom:6px;">' + modName + '</div>' +
+      '<div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:10px;">';
+
+    modulesMap[modName].forEach(function(item) {
+      var val = String(user[item.key] || "NO").trim().toUpperCase();
+      var isOn = isSystemAdmin || val === "YES";
+      var checkState = isOn ? "checked" : "";
+      var badgeText = isOn ? "ALLOWED" : "BLOCKED";
+      var badgeCls = isOn ? "auth-badge-allowed" : "auth-badge-blocked";
+
+      html += '<div class="auth-perm-card">' +
+        '<div>' +
+          '<div class="auth-perm-title">' + item.label + '</div>' +
+          '<div class="auth-perm-sub">' + item.key + '</div>' +
+        '</div>' +
+        '<div style="display:flex; align-items:center; gap:8px;">' +
+          '<span id="authBadge_' + item.key + '" class="' + badgeCls + '">' + badgeText + '</span>' +
+          '<label class="switch">' +
+            '<input type="checkbox" id="authChk_' + item.key + '" ' + checkState + ' ' + (isSystemAdmin ? 'disabled' : '') + ' onchange="authOnToggleChange(\'' + item.key + '\')">' +
+            '<span class="slider"></span>' +
+          '</label>' +
+        '</div>' +
+      '</div>';
     });
-    var tdAct = document.createElement("td");
-    if((user["User ID"] || "").toLowerCase() === "admin"){
-      tdAct.innerHTML = '<span style="color:var(--sub);font-size:10px;">System</span>';
-    } else {
-      tdAct.innerHTML = '<button class="btn btn-r" onclick="removeUserRow(' + uIdx + ')" style="padding:2px 6px;font-size:10px;">Delete</button>';
-    }
-    tr.appendChild(tdAct);
-    body.appendChild(tr);
+
+    html += '</div></div>';
   });
+
+  grid.innerHTML = html;
 }
-function updateUserVal(uIdx, colName, value){if(usersList[uIdx]){usersList[uIdx][colName]=value;}}
-function addUserRow(){
-  var newUser = {};
-  usersHeaders.forEach(function(h){
-    if(h === "User ID") newUser[h] = "user_" + Math.floor(10 + Math.random()*90);
-    else if(h === "Name") newUser[h] = "New User";
-    else if(h === "Password") newUser[h] = "pass123";
-    else if(h === "Assigned Warehouses") newUser[h] = "*";
-    else newUser[h] = "NO";
-  });
-  usersList.push(newUser);
-  renderUserAuthTable();
-}
-async function removeUserRow(uIdx){
-  if(await showAppConfirm("Delete user: " + (usersList[uIdx]["User ID"] || "") + "?", "&#x1F5D1; Delete User", true)){
-    usersList.splice(uIdx, 1);
-    renderUserAuthTable();
+
+function authOnToggleChange(key) {
+  var chk = document.getElementById("authChk_" + key);
+  var badge = document.getElementById("authBadge_" + key);
+  if (!chk || !badge) return;
+
+  var user = authUsersData.find(function(u) { return u["User ID"] === authSelectedUserId; });
+  if (user) {
+    user[key] = chk.checked ? "YES" : "NO";
+  }
+
+  if (chk.checked) {
+    badge.textContent = "ALLOWED";
+    badge.className = "auth-badge-allowed";
+  } else {
+    badge.textContent = "BLOCKED";
+    badge.className = "auth-badge-blocked";
   }
 }
-function saveAllUserAuths(){
-  var msg = document.getElementById("pg10UserAuthMsg");
-  msg.innerHTML = '<span class="spin spin-p"></span>Saving user credentials...';
+
+function authGrantAll(enableAll) {
+  if (!authSelectedUserId) return;
+  var user = authUsersData.find(function(u) { return u["User ID"] === authSelectedUserId; });
+  if (!user) return;
+
+  authPermissionKeys.forEach(function(item) {
+    user[item.key] = enableAll ? "YES" : "NO";
+  });
+
+  authRenderPermissionsPanel(user);
+}
+
+function authCreateNewUser() {
+  var uId = (document.getElementById("authNewUserId").value || "").trim();
+  var uName = (document.getElementById("authNewUserName").value || "").trim();
+  var uPass = (document.getElementById("authNewUserPass").value || "").trim();
+  var uWh = (document.getElementById("authNewUserWh").value || "*").trim();
+
+  if (!uId) { alert("Please enter User ID."); return; }
+  if (!uName) { alert("Please enter Full Name."); return; }
+  if (!uPass) { alert("Please enter Password."); return; }
+
+  var existing = authUsersData.find(function(u) { return (u["User ID"] || "").toLowerCase() === uId.toLowerCase(); });
+  if (existing) { alert("User ID '" + uId + "' already exists!"); return; }
+
+  var newUserObj = {
+    "User ID": uId,
+    "Name": uName,
+    "Password": uPass,
+    "Assigned Warehouses": uWh
+  };
+
+  authPermissionKeys.forEach(function(item) {
+    newUserObj[item.key] = "YES";
+  });
+
+  showToast("Creating User...", "Adding " + uId + " to system...", "var(--p)");
   google.script.run
-    .withSuccessHandler(function(res){
-      if(res && res.status === "SUCCESS"){
-        msg.innerHTML = '<div class="ok-msg">&#x2705; User credentials saved and reloaded!</div>';
-        setTimeout(function(){
-          loadUserAuthPage();
-        }, 1500);
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        showToast("Success", "User " + uId + " created successfully!", "#16a34a");
+        document.getElementById("authNewUserId").value = "";
+        document.getElementById("authNewUserName").value = "";
+        document.getElementById("authNewUserPass").value = "";
+        authSelectedUserId = uId;
+        loadUserAuthPage();
       } else {
-        msg.innerHTML = '<div class="err-msg">Error: ' + (res?res.message:"No response") + '</div>';
+        alert("Error creating user: " + (res ? res.message : "Unknown error"));
       }
     })
-    .withFailureHandler(function(err){
-      msg.innerHTML = '<div class="err-msg">Error: ' + err.message + '</div>';
+    .withFailureHandler(function(err) { alert("Error: " + err.message); })
+    .wmsSaveUser(newUserObj);
+}
+
+function authSaveSelectedUser() {
+  if (!authSelectedUserId) { alert("Please select a user first."); return; }
+  var user = authUsersData.find(function(u) { return u["User ID"] === authSelectedUserId; });
+  if (!user) return;
+
+  var btn = document.getElementById("authSaveBtn");
+  if (btn) { btn.disabled = true; btn.innerHTML = "&#x23F3; Saving..."; }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (btn) { btn.disabled = false; btn.innerHTML = "&#x1F4BE; Save Authorizations"; }
+      if (res && res.status === "SUCCESS") {
+        showToast("Saved!", "Permissions for " + authSelectedUserId + " updated!", "#16a34a");
+        loadUserAuthPage();
+      } else {
+        alert("Error saving authorizations: " + (res ? res.message : "Unknown error"));
+      }
     })
-    .wmsSaveAllUsers(usersList);
+    .withFailureHandler(function(err) {
+      if (btn) { btn.disabled = false; btn.innerHTML = "&#x1F4BE; Save Authorizations"; }
+      alert("Error saving authorizations: " + err.message);
+    })
+    .wmsSaveUser(user);
 }
 
 /* THEME */
@@ -4504,6 +4782,7 @@ function goTab(n){
   if(n===31) { inv31Init(); }
   if(n===32) { loadPartyMasterPage32(); }
   if(n===33) { loadMailMasterPage33(); }
+  if(n===34) { loadOutwardReportPage34(); }
 }
 function tabDone(n){
   var tEl = document.getElementById("tab"+n);
@@ -7499,74 +7778,115 @@ function loadActivityLogPage() {
   });
 }
 
+/* --- 1. BIN MASTER (PAGE 12) --- */
+var binMasterData32 = [];
+
 function loadBinMasterPage() {
   var el = document.getElementById("pg12WhName");
   if (el) el.textContent = activeWarehouse;
   var tbody = document.getElementById("pg12BinBody");
   if (!tbody) return;
-  tbody.innerHTML = "<tr><td colspan='6' style='text-align:center;'>&#x23F3; Loading storage configuration...</td></tr>";
-  
+  tbody.innerHTML = "<tr><td colspan='6' style='text-align:center; padding:20px; color:var(--sub);'>&#x23F3; Loading storage configuration...</td></tr>";
+
   google.script.run
     .withSuccessHandler(function(res) {
-      tbody.innerHTML = "";
-      var bins = (res && res.bins) ? res.bins : [
-        { code: "BIN-A1-01", zone: "FAST", type: "PALLET", allocatedSku: "AC138", capacity: "500 / 1000 kg", status: "Active" },
-        { code: "BIN-A1-02", zone: "FAST", type: "PALLET", allocatedSku: "AC200", capacity: "820 / 1000 kg", status: "Active" },
-        { code: "BIN-B4-12", zone: "SLOW", type: "SHELF", allocatedSku: "Empty", capacity: "0 / 200 kg", status: "Available" },
-        { code: "BIN-C2-04", zone: "BULK", type: "FLOOR", allocatedSku: "AC350", capacity: "1500 / 5000 kg", status: "Active" }
-      ];
-      bins.forEach(function(b) {
-        var tr = document.createElement("tr");
-        var isAvail = b.status === "Available" || !b.allocatedSku || b.allocatedSku === "Empty";
-        var badgeCls = isAvail ? "badge-pend" : "badge-ok";
-        var badgeText = isAvail ? "Available" : "Active";
-        tr.innerHTML = '<td class="row-mono">' + b.code + '</td><td>' + b.zone + '</td><td>' + b.type + '</td><td>' + (isAvail ? '<i>Empty</i>' : b.allocatedSku) + '</td><td>' + (b.capacity || '-') + '</td><td><span class="badge ' + badgeCls + '">' + badgeText + '</span></td>';
-        tbody.appendChild(tr);
-      });
+      if (res && res.status === "SUCCESS") {
+        binMasterData32 = res.bins || [];
+        renderBinMasterTable12(binMasterData32);
+      } else {
+        tbody.innerHTML = "<tr><td colspan='6' style='text-align:center; color:var(--red);'>&#x274C; " + (res ? res.message : "Failed to load bins.") + "</td></tr>";
+      }
     })
-    .withFailureHandler(function() {
-      tbody.innerHTML = "<tr><td colspan='6' style='text-align:center; color:var(--red);'>Failed to load bins.</td></tr>";
+    .withFailureHandler(function(err) {
+      tbody.innerHTML = "<tr><td colspan='6' style='text-align:center; color:var(--red);'>&#x274C; Error: " + err.message + "</td></tr>";
     })
-    .invGetBinsAndSKUs(activeWarehouse);
+    .setupGetBinMaster(activeWarehouse);
+}
+
+function renderBinMasterTable12(bins) {
+  var tbody = document.getElementById("pg12BinBody");
+  if (!tbody) return;
+  if (bins.length === 0) {
+    tbody.innerHTML = "<tr><td colspan='6' style='text-align:center; color:var(--sub); padding:15px;'>No storage bins registered for warehouse " + activeWarehouse + ".</td></tr>";
+    return;
+  }
+  tbody.innerHTML = bins.map(function(b) {
+    var isAvail = b.status === "Available" || !b.allocatedSku || b.allocatedSku === "-";
+    return '<tr>' +
+      '<td class="row-mono"><strong>' + b.code + '</strong></td>' +
+      '<td>' + b.zone + '</td>' +
+      '<td>' + b.type + '</td>' +
+      '<td>' + (isAvail ? '<i>Empty</i>' : b.allocatedSku) + '</td>' +
+      '<td style="text-align:right;">' + (b.capacity || '1000') + ' Box</td>' +
+      '<td><span class="badge ' + (isAvail ? 'badge-pend' : 'badge-ok') + '">' + b.status + '</span></td>' +
+    '</tr>';
+  }).join('');
 }
 
 function addMockBinFullPage() {
+  var activeUser = (typeof currentUser !== 'undefined' && currentUser ? (currentUser.id || currentUser.name || 'Admin') : 'Admin');
   var bin = document.getElementById("pg12BinCode").value.trim().toUpperCase();
   var zone = document.getElementById("pg12BinZone").value;
   var type = document.getElementById("pg12BinType").value;
-  var weight = document.getElementById("pg12BinWeight").value;
-  if(!bin){alert("Please enter Bin Code.");return;}
-  var tbody = document.getElementById("pg12BinBody");
-  var tr = document.createElement("tr");
-  tr.innerHTML = '<td class="row-mono">' + bin + '</td><td>' + zone + '</td><td>' + type + '</td><td><i>Empty</i></td><td>0 / ' + weight + ' kg</td><td><span class="badge badge-pend">Available</span></td>';
-  tbody.insertBefore(tr, tbody.firstChild);
-  document.getElementById("pg12BinCode").value = "";
-  alert("Bin " + bin + " registered successfully in warehouse " + activeWarehouse + ".");
+  var cap = document.getElementById("pg12BinWeight").value;
+  if (!bin) { alert("Please enter Bin Code."); return; }
+
+  var binObj = { code: bin, zone: zone, type: type, capacity: cap, allocatedSku: "-", status: "Active" };
+
+  showToast("Saving Bin...", "Registering bin " + bin + "...", "var(--p)");
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.status === "SUCCESS") {
+        showToast("Success", res.message, "#16a34a");
+        document.getElementById("pg12BinCode").value = "";
+        loadBinMasterPage();
+      } else {
+        alert("Error saving bin: " + (res ? res.message : "Unknown error"));
+      }
+    })
+    .withFailureHandler(function(err) { alert("Error: " + err.message); })
+    .setupSaveBinMaster(activeWarehouse, binObj, activeUser);
 }
+
+/* --- 2. SKU MASTER (PAGE 13) --- */
+var skuMasterData13 = [];
 
 function loadProductMasterPage() {
   var tbody = document.getElementById("pg13ProdBody");
   if (!tbody) return;
-  tbody.innerHTML = "<tr><td colspan='5' style='text-align:center;'>&#x23F3; Loading products registry...</td></tr>";
-  
+  tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; padding:20px; color:var(--sub);'>&#x23F3; Loading product SKU registry...</td></tr>";
+
   google.script.run
     .withSuccessHandler(function(res) {
-      tbody.innerHTML = "";
-      var skus = (res && res.skus) ? res.skus : [
-        { sku: "AC138", description: "Bonn Premium White Bread 400g", uom: "BOX", category: "BREAD", shelfLife: "5 Days" },
-        { sku: "AC200", description: "Bonn Atta Bread Healthy 400g", uom: "BOX", category: "BREAD", shelfLife: "5 Days" },
-        { sku: "AC350", description: "Bonn Americana Butter Cookies 200g", uom: "BOX", category: "BISCUITS", shelfLife: "180 Days" }
-      ];
-      skus.forEach(function(s) {
-        var tr = document.createElement("tr");
-        tr.innerHTML = '<td class="row-mono">' + s.sku + '</td><td>' + s.description + '</td><td>' + (s.uom || '-') + '</td><td>' + (s.category || '-') + '</td><td>' + (s.shelfLife || '-') + '</td>';
-        tbody.appendChild(tr);
-      });
+      if (res && res.status === "SUCCESS") {
+        skuMasterData13 = res.skus || [];
+        renderSkuMasterTable13(skuMasterData13);
+      } else {
+        tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--red);'>&#x274C; " + (res ? res.message : "Failed to load SKUs.") + "</td></tr>";
+      }
     })
-    .withFailureHandler(function() {
-      tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--red);'>Failed to load products.</td></tr>";
+    .withFailureHandler(function(err) {
+      tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--red);'>&#x274C; Error: " + err.message + "</td></tr>";
     })
-    .invGetBinsAndSKUs(activeWarehouse);
+    .setupGetSkuMaster();
+}
+
+function renderSkuMasterTable13(skus) {
+  var tbody = document.getElementById("pg13ProdBody");
+  if (!tbody) return;
+  if (skus.length === 0) {
+    tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:var(--sub); padding:15px;'>No SKU products registered.</td></tr>";
+    return;
+  }
+  tbody.innerHTML = skus.map(function(s) {
+    return '<tr>' +
+      '<td class="row-mono"><strong>' + s.code + '</strong></td>' +
+      '<td>' + s.desc + '</td>' +
+      '<td style="text-align:center;">' + (s.uom || 'BOX') + '</td>' +
+      '<td>' + (s.category || 'FINISHED GOODS') + '</td>' +
+      '<td style="text-align:center;">' + (s.shelfLife || '12 Months') + '</td>' +
+    '</tr>';
+  }).join('');
 }
 
 function addMockProductFullPage() {
@@ -14395,9 +14715,217 @@ function opFetchData() {
     .opGetSheetData(activeWarehouse);
 }
 
+function opOnUniversalSearch24(val) {
+  var clearBtn = document.getElementById('opClearSearchBtn24');
+  if (clearBtn) clearBtn.style.display = val.trim() ? 'block' : 'none';
+  opApplyFilters();
+}
+
+function opClearUniversalSearch24() {
+  var searchInput = document.getElementById('opUniversalSearch24');
+  if (searchInput) searchInput.value = '';
+  var clearBtn = document.getElementById('opClearSearchBtn24');
+  if (clearBtn) clearBtn.style.display = 'none';
+  opApplyFilters();
+}
+
+function _findColIdx(headers, targetName) {
+  if (!headers || !targetName) return -1;
+  var normTarget = String(targetName).toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (var i = 0; i < headers.length; i++) {
+    var h = String(headers[i] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (h === normTarget) return i;
+  }
+  return -1;
+}
+
+function _normDateStr(val) {
+  if (!val && val !== 0) return "";
+  var s = String(val).trim();
+  if (s.indexOf("T") !== -1) s = s.split("T")[0];
+  var m = s.match(/(\d{4})[\-\/](\d{1,2})[\-\/](\d{1,2})/);
+  if (m) {
+    var y = m[1];
+    var mm = m[2].length === 1 ? "0" + m[2] : m[2];
+    var dd = m[3].length === 1 ? "0" + m[3] : m[3];
+    return y + "-" + mm + "-" + dd;
+  }
+  return s;
+}
+
+function opOnStatusFilterChange24() {
+  var statusSel = document.getElementById('opStatusFilter24');
+  var dateContainer = document.getElementById('opDispatchDateContainer24');
+  var targetStatus = statusSel ? statusSel.value : 'Pending';
+
+  if (targetStatus === 'Dispatched') {
+    if (dateContainer) dateContainer.style.display = 'inline-flex';
+  } else {
+    if (dateContainer) dateContainer.style.display = 'none';
+  }
+
+  opApplyFilters();
+}
+
+function opClearDispatchDate24() {
+  var fromInp = document.getElementById('opDispatchFromDate24');
+  var toInp = document.getElementById('opDispatchToDate24');
+  if (fromInp) fromInp.value = '';
+  if (toInp) toInp.value = '';
+  opApplyFilters();
+}
+
 function opApplyFilters() {
+  var statusSel = document.getElementById('opStatusFilter24');
+  var targetStatus = statusSel ? statusSel.value : 'Pending';
+
+  var searchInput = document.getElementById('opUniversalSearch24');
+  var searchVal = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
   opFilteredRows24 = opAllRows24.filter(function(rowInfo) {
     var row = rowInfo.data;
+    var rIdx = rowInfo.rowIndex;
+
+    // 1. Order Status Filter (Default: "Pending")
+    if (targetStatus && targetStatus !== 'All') {
+      var statusColIdx = _findColIdx(opHeaders24, "ORDER STATUS");
+      if (statusColIdx >= 0) {
+        var rowStatus = String(row[statusColIdx] || '').trim();
+        var editKey = rIdx + '_' + opHeaders24[statusColIdx];
+        if (opEdits24[editKey] !== undefined) {
+          rowStatus = String(opEdits24[editKey].value).trim();
+        }
+        
+        var stNorm = rowStatus.toLowerCase().trim();
+        if (targetStatus === 'Pending') {
+          if (stNorm && stNorm !== 'pending' && stNorm !== 'created' && stNorm !== '-') {
+            return false;
+          }
+        } else if (targetStatus === 'Picking') {
+          if (stNorm !== 'picking') return false;
+        } else if (targetStatus === 'Dispatched') {
+          if (stNorm !== 'confirmed' && stNorm !== 'dispatched' && stNorm !== 'completed') return false;
+
+          var fromInp = document.getElementById('opDispatchFromDate24');
+          var toInp = document.getElementById('opDispatchToDate24');
+          var fromDate = fromInp ? fromInp.value.trim() : '';
+          var toDate = toInp ? toInp.value.trim() : '';
+
+          if (fromDate || toDate) {
+            var loadingDateIdx = _findColIdx(opHeaders24, "LOADING DATE");
+            if (loadingDateIdx >= 0) {
+              var rowDateVal = row[loadingDateIdx];
+              var dEditKey = rIdx + '_' + opHeaders24[loadingDateIdx];
+              if (opEdits24[dEditKey] !== undefined) {
+                rowDateVal = opEdits24[dEditKey].value;
+              }
+              var normRowDate = _normDateStr(rowDateVal);
+              if (normRowDate) {
+                if (fromDate && normRowDate < fromDate) return false;
+                if (toDate && normRowDate > toDate) return false;
+              } else {
+                return false;
+              }
+            }
+          }
+        } else if (targetStatus === 'PGI Done') {
+          if (stNorm !== 'pgi done' && stNorm !== 'pgi') return false;
+        }
+      }
+    }
+
+    // 2. Column Dropdown Filters
+    for (var fName in opFilters24) {
+      var colIdx = opHeaders24.indexOf(fName);
+      if (colIdx >= 0) {
+        var val = String(row[colIdx] || '').trim();
+        var allowedVals = opFilters24[fName];
+        if (allowedVals && allowedVals.size > 0 && !allowedVals.has(val)) {
+          return false;
+        }
+      }
+    }
+
+    // 3. Universal Search Filter across all fields
+    if (searchVal) {
+      var matchFound = false;
+      for (var c = 0; c < row.length; c++) {
+        var cellVal = row[c];
+        var h = opHeaders24[c];
+        var editKey = rIdx + '_' + h;
+        if (opEdits24[editKey] !== undefined) cellVal = opEdits24[editKey].value;
+        if (cellVal !== null && cellVal !== undefined) {
+          if (String(cellVal).toLowerCase().indexOf(searchVal) !== -1) {
+            matchFound = true;
+            break;
+          }
+        }
+      }
+      if (!matchFound) return false;
+    }
+
+    return true;
+  });
+
+  opUpdateSummaryStats24();
+  opRenderGrid();
+}
+
+function opUpdateSummaryStats24() {
+  var statWh = document.getElementById('opStatWh24');
+  var statTotOrders = document.getElementById('opStatTotalOrders24');
+  var statTotQty = document.getElementById('opStatTotalQty24');
+  var statDispatchQty = document.getElementById('opStatDispatchQty24');
+  var statShortageQty = document.getElementById('opStatShortageQty24');
+
+  if (statWh) statWh.textContent = activeWarehouse || "BB04";
+  if (statTotOrders) statTotOrders.textContent = opFilteredRows24.length;
+
+  var orderQtyIdx = _findColIdx(opHeaders24, "ORDER QTY");
+  var dispatchQtyIdx = _findColIdx(opHeaders24, "DISPATCH QTY");
+  var shortageQtyIdx = _findColIdx(opHeaders24, "SHORTAGE QTY");
+
+  var totalOrderQty = 0;
+  var totalDispatchQty = 0;
+  var totalShortageQty = 0;
+
+  opFilteredRows24.forEach(function(rowInfo) {
+    var row = rowInfo.data;
+    var rIdx = rowInfo.rowIndex;
+
+    if (orderQtyIdx >= 0) {
+      var qVal = row[orderQtyIdx];
+      var editKey = rIdx + '_' + opHeaders24[orderQtyIdx];
+      if (opEdits24[editKey] !== undefined) qVal = opEdits24[editKey].value;
+      totalOrderQty += (Number(qVal) || 0);
+    }
+
+    if (dispatchQtyIdx >= 0) {
+      var dVal = row[dispatchQtyIdx];
+      var editKey = rIdx + '_' + opHeaders24[dispatchQtyIdx];
+      if (opEdits24[editKey] !== undefined) dVal = opEdits24[editKey].value;
+      totalDispatchQty += (Number(dVal) || 0);
+    }
+
+    if (shortageQtyIdx >= 0) {
+      var sVal = row[shortageQtyIdx];
+      var editKey = rIdx + '_' + opHeaders24[shortageQtyIdx];
+      if (opEdits24[editKey] !== undefined) sVal = opEdits24[editKey].value;
+      totalShortageQty += (Number(sVal) || 0);
+    }
+  });
+
+  if (statTotQty) statTotQty.textContent = Math.round(totalOrderQty).toLocaleString();
+  if (statDispatchQty) statDispatchQty.textContent = Math.round(totalDispatchQty).toLocaleString();
+  if (statShortageQty) statShortageQty.textContent = Math.round(totalShortageQty).toLocaleString();
+}
+      var rowText = (row || []).join(' ').toLowerCase();
+      if (rowText.indexOf(globalQuery) === -1) {
+        return false;
+      }
+    }
+
+    // 2. Column-specific Dropdown Popover Filters
     for (var fName in opFilters24) {
       var colIdx = opHeaders24.indexOf(fName);
       if (colIdx >= 0) {
@@ -16055,6 +16583,7 @@ function opToggleSelectAll27(isChecked) {
 function opUpdateSelCount27() {
   var selEl = document.getElementById("opSelCount27");
   var btn = document.getElementById("opConfirmBtn27");
+  var reprintBtn = document.getElementById("opReprintPickListBtn27");
   var statTotOrders = document.getElementById("opStatTotalOrders27");
   var statSelOrders = document.getElementById("opStatSelOrders27");
   var statTotalQty = document.getElementById("opStatTotalQty27");
@@ -16064,6 +16593,7 @@ function opUpdateSelCount27() {
   if (selEl) selEl.textContent = count + " order(s) selected";
   if (statSelOrders) statSelOrders.textContent = count;
   if (btn) btn.disabled = count === 0;
+  if (reprintBtn) reprintBtn.disabled = count === 0;
 
   if (statTotOrders) statTotOrders.textContent = (opAllOrders27 || []).length;
   if (statPlant) statPlant.textContent = activeWarehouse || "BB04";
@@ -16075,6 +16605,34 @@ function opUpdateSelCount27() {
   if (allChk && opFilteredOrders27.length > 0) {
     allChk.checked = opSelectedSoNumbers27.length === opFilteredOrders27.length;
   }
+}
+
+function opTriggerReprintPickList27() {
+  if (!opSelectedSoNumbers27 || opSelectedSoNumbers27.length === 0) {
+    alert("Please select an order to reprint Pick List.");
+    return;
+  }
+
+  var loader = document.getElementById("opLoader27");
+  if (loader) {
+    loader.style.display = "block";
+    loader.textContent = "⏳ Generating Pick List print preview...";
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (loader) loader.style.display = "none";
+      if (res && res.status === "SUCCESS" && res.payload) {
+        opExecutePrintPickListWindow(res.payload);
+      } else {
+        alert("Failed to generate Pick List preview: " + (res ? res.message : "Unknown error"));
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (loader) loader.style.display = "none";
+      alert("Error generating Pick List: " + err.message);
+    })
+    .opPreviewOutboundPickList(activeWarehouse, opSelectedSoNumbers27);
 }
 
 function opTriggerConfirmOrder27() {
@@ -16506,6 +17064,207 @@ function opSubmitOutboundDeduct27() {
     .opConfirmOutboundDeductStock(payload);
 }
 
+/* --- PHYSICAL STOCK ALLOCATION TAB HANDLERS --- */
+var physicalAllocData = [];
+
+function switchAllocTab(tabType) {
+  var btnSAP = document.getElementById("btnAllocTabSAP");
+  var btnPhysical = document.getElementById("btnAllocTabPhysical");
+  var contentSAP = document.getElementById("allocTabContentSAP");
+  var contentPhysical = document.getElementById("allocTabContentPhysical");
+
+  if (!btnSAP || !btnPhysical || !contentSAP || !contentPhysical) return;
+
+  if (tabType === "SAP") {
+    btnSAP.className = "btn btn-p alloc-tab-btn";
+    btnPhysical.className = "btn btn-ghost alloc-tab-btn";
+    contentSAP.style.display = "block";
+    contentPhysical.style.display = "none";
+    loadAlloc();
+  } else {
+    btnSAP.className = "btn btn-ghost alloc-tab-btn";
+    btnPhysical.className = "btn btn-p alloc-tab-btn";
+    contentSAP.style.display = "none";
+    contentPhysical.style.display = "block";
+    loadPhysicalAlloc();
+  }
+}
+
+function loadPhysicalAlloc() {
+  var btn = document.getElementById("phyAlRefBtn");
+  if (btn) {
+    btn.disabled = true;
+    document.getElementById("phyAlRefTxt").innerHTML = '<span class="spin spin-p"></span>';
+  }
+  progShow("phyAlp", "phyAlb");
+  document.getElementById("phyAlMsg").innerHTML = "";
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      progHide("phyAlp", "phyAlb");
+      if (btn) {
+        btn.disabled = false;
+        document.getElementById("phyAlRefTxt").textContent = "🔄 Refresh";
+      }
+      if (!res || res.status !== "SUCCESS" || !res.data) {
+        document.getElementById("phyAlMsg").innerHTML = '<div class="err-msg">' + (res ? res.message : "Failed to load physical stock allocations.") + '</div>';
+        return;
+      }
+      physicalAllocData = res.data;
+      renderPhysicalAllocTable(physicalAllocData);
+    })
+    .withFailureHandler(function(err) {
+      progHide("phyAlp", "phyAlb");
+      if (btn) {
+        btn.disabled = false;
+        document.getElementById("phyAlRefTxt").textContent = "🔄 Refresh";
+      }
+      document.getElementById("phyAlMsg").innerHTML = '<div class="err-msg">' + err.message + '</div>';
+    })
+    .ocGetPhysicalStockAllocationSummary(activeWarehouse);
+}
+
+function renderPhysicalAllocTable(dataList) {
+  var summaryWrap = document.getElementById("phyAlSummary");
+  var listWrap = document.getElementById("phyAlList");
+  if (!summaryWrap || !listWrap) return;
+
+  if (!dataList || dataList.length === 0) {
+    summaryWrap.innerHTML = "";
+    listWrap.innerHTML = '<div style="color:var(--sub);font-size:13px;padding:8px 0;">No physical stock allocation data found.</div>';
+    return;
+  }
+
+  var totalPhysical = 0;
+  var totalAllocInhand = 0;
+  var totalAllocTransit = 0;
+  var totalAvailable = 0;
+
+  dataList.forEach(function(item) {
+    totalPhysical += item.physicalQty;
+    totalAllocInhand += item.allocatedInhand;
+    totalAllocTransit += item.allocatedTransit;
+    totalAvailable += item.availablePhysicalQty;
+  });
+
+  summaryWrap.innerHTML = '<div style="display:flex; gap:12px; flex-wrap:wrap; padding:12px 16px; background:var(--bg-input, rgba(15,23,42,0.4)); border:1px solid var(--bdr); border-radius:8px; font-size:12.5px;">' +
+    '<span>📦 <b>Total Physical Bin Stock:</b> <span class="row-mono" style="font-weight:700; color:var(--p);">' + totalPhysical.toLocaleString() + '</span></span>' +
+    '<span>🔒 <b>Total Allocated (Inhand):</b> <span class="row-mono" style="font-weight:700; color:#d97706;">' + totalAllocInhand.toLocaleString() + '</span></span>' +
+    '<span>🚛 <b>Total Allocated (Transit):</b> <span class="row-mono" style="font-weight:700; color:#9333ea;">' + totalAllocTransit.toLocaleString() + '</span></span>' +
+    '<span>✅ <b>Available Physical Stock:</b> <span class="row-mono" style="font-weight:700; color:#16a34a;">' + totalAvailable.toLocaleString() + '</span></span>' +
+  '</div>';
+
+  var rowsHtml = dataList.map(function(item, idx) {
+    var binsStr = item.bins.map(function(b) { return b.bin + " (" + b.qty + ")"; }).join(", ") || "No physical bins";
+    var ordersStr = item.orders.map(function(o) { return "SO: " + o.soNumber + " (" + o.partyName + ")"; }).join("; ") || "No allocated orders";
+
+    return '<tr>' +
+      '<td>' + (idx + 1) + '</td>' +
+      '<td class="row-mono"><b>' + item.sku + '</b></td>' +
+      '<td>' + (item.desc || "-") + '</td>' +
+      '<td style="text-align:right; font-weight:700; color:var(--p);">' + item.physicalQty.toLocaleString() + '</td>' +
+      '<td style="text-align:right; font-weight:700; color:#d97706;">' + item.allocatedInhand.toLocaleString() + '</td>' +
+      '<td style="text-align:right; font-weight:700; color:#9333ea;">' + item.allocatedTransit.toLocaleString() + '</td>' +
+      '<td style="text-align:right; font-weight:700; color:#16a34a;">' + item.availablePhysicalQty.toLocaleString() + '</td>' +
+      '<td style="font-size:11px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + binsStr + '">' + binsStr + '</td>' +
+      '<td style="font-size:11px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + ordersStr + '">' + ordersStr + '</td>' +
+    '</tr>';
+  }).join("");
+
+  listWrap.innerHTML = '<div style="overflow-x:auto;">' +
+    '<table class="excel-table" style="font-size:11.5px; width:100%; border:1px solid var(--bdr);">' +
+      '<thead>' +
+        '<tr>' +
+          '<th>#</th>' +
+          '<th>SKU Code</th>' +
+          '<th>Description</th>' +
+          '<th style="text-align:right;">Physical Bin Stock</th>' +
+          '<th style="text-align:right;">🔒 Inhand Alloc</th>' +
+          '<th style="text-align:right;">🚛 Transit Alloc</th>' +
+          '<th style="text-align:right;">✅ Available Stock</th>' +
+          '<th>Physical Bins Breakdown</th>' +
+          '<th>Allocated Orders</th>' +
+        '</tr>' +
+      '</thead>' +
+      '<tbody>' + rowsHtml + '</tbody>' +
+    '</table>' +
+  '</div>';
+}
+
+function filterPhysicalAllocTable() {
+  var q = (document.getElementById("phyAllocSearchInput").value || "").trim().toLowerCase();
+  if (!q) {
+    renderPhysicalAllocTable(physicalAllocData);
+    return;
+  }
+  var filtered = physicalAllocData.filter(function(item) {
+    return item.sku.toLowerCase().indexOf(q) !== -1 || (item.desc && item.desc.toLowerCase().indexOf(q) !== -1);
+  });
+  renderPhysicalAllocTable(filtered);
+}
+
+function exportPhysicalAllocExcel() {
+  if (!physicalAllocData || physicalAllocData.length === 0) {
+    alert("No physical stock allocation data to export.");
+    return;
+  }
+
+  var btn = document.getElementById("phyAlExportBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Exporting...";
+  }
+
+  try {
+    var headers = ["SKU Code", "Description", "Physical Bin Stock", "Inhand Allocated", "Transit Allocated", "Available Physical Stock", "Physical Bins", "Allocated Sales Orders"];
+    var rows = physicalAllocData.map(function(item) {
+      var binsStr = item.bins.map(function(b) { return b.bin + " (" + b.qty + ")"; }).join(", ");
+      var ordersStr = item.orders.map(function(o) { return "SO: " + o.soNumber + " - " + o.partyName + " (Inhand:" + o.inhAlloc + ", Trn:" + o.trnAlloc + ")"; }).join("; ");
+      return [item.sku, item.desc || "", item.physicalQty, item.allocatedInhand, item.allocatedTransit, item.availablePhysicalQty, binsStr, ordersStr];
+    });
+
+    var ws_data = [headers].concat(rows);
+    var wb = XLSX.utils.book_new();
+    var ws = XLSX.utils.aoa_to_sheet(ws_data);
+    XLSX.utils.book_append_sheet(wb, ws, "Physical Allocation");
+    XLSX.writeFile(wb, "Physical_Stock_Allocation_" + (activeWarehouse || "BB04") + ".xlsx");
+  } catch(e) {
+    alert("Export Error: " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "📊 Export Excel";
+    }
+  }
+}
+
+function iwUpdateKpiDashboard23(rows) {
+  var vEl = document.getElementById('iwKpiVehicles23');
+  var qEl = document.getElementById('iwKpiTotalQty23');
+  var sEl = document.getElementById('iwKpiSkus23');
+  if (!vEl || !qEl || !sEl) return;
+  if (!rows || rows.length === 0) {
+    vEl.textContent = '0';
+    qEl.textContent = '0';
+    sEl.textContent = '0';
+    return;
+  }
+  var vehiclesMap = {};
+  var totalQty = 0;
+  var skusMap = {};
+  rows.forEach(function(r) {
+    var v = (r.vehicleNo || r.vehicle || '').toString().trim().toUpperCase();
+    if (v && v !== '-') vehiclesMap[v] = true;
+    var q = Number(r.phyQty !== undefined ? r.phyQty : (r.billQty !== undefined ? r.billQty : r.qty)) || 0;
+    totalQty += q;
+    var s = (r.sku || r.materialCode || r.material || '').toString().trim().toUpperCase();
+    if (s && s !== '-') skusMap[s] = true;
+  });
+  vEl.textContent = Object.keys(vehiclesMap).length.toLocaleString();
+  qEl.textContent = totalQty.toLocaleString();
+  sEl.textContent = Object.keys(skusMap).length.toLocaleString();
+}
+
 /* =========================================================================
    PAGE 28, 29, 30, 31: INVENTORY & CCI MODULE JAVASCRIPT LOGIC
    ========================================================================= */
@@ -16741,14 +17500,16 @@ function invRenderLessStockTable(bin, items) {
       '<td style="text-align:center; font-weight:600;">' + (idx + 1) + '</td>' +
       '<td><strong class="row-mono">' + it.sku + '</strong></td>' +
       '<td>' + (it.name || '-') + '</td>' +
-      '<td style="position:relative;">'+
-        '<input type="text" id="invLessMfg_' + idx + '" value="' + cleanMfg + '" class="input-in" style="width:110px; text-transform:uppercase; height:32px; text-align:center;">'+
+      '<td style="position:relative;">' +
+        '<input type="text" id="invLessMfg_' + idx + '" value="' + cleanMfg + '" class="input-in" style="width:110px; text-transform:uppercase; height:32px; text-align:center;" onclick="invShowRowMfgDrop(' + idx + ', this)" oninput="invShowRowMfgDrop(' + idx + ', this)">' +
+        '<div id="invRowMfgDrop_' + idx + '" class="dropdown-list" style="display:none; position:absolute; left:0; width:130px; top:100%; max-height:140px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000; box-shadow:0 4px 6px rgba(0,0,0,0.1);"></div>' +
       '</td>' +
       '<td><input type="number" id="invLessQty_' + idx + '" value="' + it.qty + '" class="input-in" style="width:90px; height:32px; text-align:right;"></td>' +
-      '<td style="position:relative;">'+
-        '<input type="text" id="invLessBin_' + idx + '" value="' + it.bin + '" class="input-in" style="width:110px; text-transform:uppercase; height:32px; text-align:center;">'+
+      '<td style="position:relative;">' +
+        '<input type="text" id="invLessBin_' + idx + '" value="' + it.bin + '" class="input-in" style="width:110px; text-transform:uppercase; height:32px; text-align:center;" onclick="invShowRowBinDrop(' + idx + ', this)" oninput="invShowRowBinDrop(' + idx + ', this)">' +
+        '<div id="invRowBinDrop_' + idx + '" class="dropdown-list" style="display:none; position:absolute; left:0; width:130px; top:100%; max-height:140px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; border-radius:6px; z-index:1000; box-shadow:0 4px 6px rgba(0,0,0,0.1);"></div>' +
       '</td>' +
-      '<td style="text-align:center; vertical-align:middle; width:100px;">'+
+      '<td style="text-align:center; vertical-align:middle; width:100px;">' +
         '<button class="btn" onclick="invSaveItemAdjust(' + idx + ', \'UPDATE\')" style="background:#2563eb; color:#fff; padding:6px 14px; font-weight:600; font-size:12px; border-radius:6px; border:none; cursor:pointer;">&#x1F4BE; Save</button>' +
       '</td>' +
     '</tr>';
@@ -16780,6 +17541,48 @@ function getMfgMasterList() {
     months.forEach(function(m) { mfgOptions.push(m + y2); });
   });
   return mfgOptions;
+}
+
+function invShowRowMfgDrop(idx, input) {
+  var drop = document.getElementById('invRowMfgDrop_' + idx);
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var mfgList = getMfgMasterList();
+  var filtered = mfgList.filter(function(m) {
+    return !val || m.toUpperCase().indexOf(val) !== -1;
+  });
+
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(m) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="document.getElementById(\'invLessMfg_' + idx + '\').value=\'' + m + '\'; document.getElementById(\'invRowMfgDrop_' + idx + '\').style.display=\'none\';">' + m + '</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function invShowRowBinDrop(idx, input) {
+  var drop = document.getElementById('invRowBinDrop_' + idx);
+  if (!drop) return;
+  var val = (input.value || '').trim().toUpperCase();
+  var binList = (invAddMasterData && invAddMasterData.bins && invAddMasterData.bins.length > 0) ? invAddMasterData.bins : [];
+  var filtered = binList.filter(function(b) {
+    return !val || b.toUpperCase().indexOf(val) !== -1;
+  });
+
+  if (filtered.length === 0) { drop.style.display = 'none'; return; }
+  drop.innerHTML = filtered.slice(0, 30).map(function(b) {
+    return '<div style="padding:6px 10px; cursor:pointer;" onclick="document.getElementById(\'invLessBin_' + idx + '\').value=\'' + b + '\'; document.getElementById(\'invRowBinDrop_' + idx + '\').style.display=\'none\';">' + b + '</div>';
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function getSkuMasterList31() {
+  if (invAddMasterData && invAddMasterData.skus && invAddMasterData.skus.length > 0) {
+    return invAddMasterData.skus;
+  }
+  if (typeof products !== "undefined" && Array.isArray(products) && products.length > 0) {
+    return products.map(function(p) { return { code: p.sku || p.code, desc: p.name || p.desc }; });
+  }
+  return [];
 }
 
 function invSaveItemAdjust(idx, action) {
@@ -17308,6 +18111,258 @@ function deleteMailMaster33(mailId) {
     .setupDeleteMailMaster(mailId, activeUser);
 }
 
+/* =========================================================================
+   PAGE 34: OUTWARD & DISPATCH REPORT (OUTWARD_MIS) JAVASCRIPT CONTROLLER
+   ========================================================================= */
+
+var owAllRecords34 = [];
+var owFilteredRecords34 = [];
+var owCurrentPage34 = 1;
+var owPageSize34 = 300;
+
+function loadOutwardReportPage34() {
+  document.getElementById("owLoader34").style.display = "block";
+
+  // Pre-fill plant dropdown with active warehouse if set
+  var plantSel = document.getElementById("owFltPlant34");
+  if (plantSel && activeWarehouse) {
+    plantSel.value = activeWarehouse;
+  }
+
+  opFetchOutwardReportData34();
+}
+
+function opFetchOutwardReportData34() {
+  var plant = document.getElementById("owFltPlant34") ? document.getElementById("owFltPlant34").value : "ALL";
+  var status = document.getElementById("owFltStatus34") ? document.getElementById("owFltStatus34").value : "ALL";
+  var dateType = document.getElementById("owFltDateType34") ? document.getElementById("owFltDateType34").value : "LOADING_DATE";
+  var fromDate = document.getElementById("owFltFromDate34") ? document.getElementById("owFltFromDate34").value : "";
+  var toDate = document.getElementById("owFltToDate34") ? document.getElementById("owFltToDate34").value : "";
+  var limit = document.getElementById("owFltLimit34") ? document.getElementById("owFltLimit34").value : "5000";
+  var customer = document.getElementById("owFltCust34") ? document.getElementById("owFltCust34").value : "";
+  var tpt = document.getElementById("owFltTpt34") ? document.getElementById("owFltTpt34").value : "";
+  var vehicle = document.getElementById("owFltVeh34") ? document.getElementById("owFltVeh34").value : "";
+  var search = document.getElementById("owFltSearch34") ? document.getElementById("owFltSearch34").value : "";
+
+  var filters = {
+    warehouse: plant,
+    status: status,
+    dateType: dateType,
+    fromDate: fromDate,
+    toDate: toDate,
+    limit: limit,
+    customer: customer,
+    tpt: tpt,
+    vehicle: vehicle,
+    search: search
+  };
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      document.getElementById("owLoader34").style.display = "none";
+      if (res && (res.status === "OK" || res.status === "SUCCESS")) {
+        owAllRecords34 = res.records || [];
+        owFilteredRecords34 = owAllRecords34;
+        owCurrentPage34 = 1;
+
+        if (res.metrics) {
+          document.getElementById("owMetricTotalOrders34").textContent = res.metrics.totalOrders || 0;
+          document.getElementById("owMetricOrderQty34").textContent = (res.metrics.totalOrderQty || 0).toLocaleString();
+          document.getElementById("owMetricDispatchQty34").textContent = (res.metrics.totalDispatchQty || 0).toLocaleString();
+          document.getElementById("owMetricShortageQty34").textContent = (res.metrics.totalShortageQty || 0).toLocaleString();
+          document.getElementById("owMetricCompleted34").textContent = res.metrics.completedCount || 0;
+        }
+
+        opRenderOutwardReportTable34(owFilteredRecords34);
+      } else {
+        alert("Failed to load Outward Report: " + (res ? res.error || res.message : "Unknown error"));
+      }
+    })
+    .withFailureHandler(function(err) {
+      document.getElementById("owLoader34").style.display = "none";
+      alert("Error loading Outward Report: " + err.message);
+    })
+    .opGetOutwardReportData(activeWarehouse, filters);
+}
+
+function opApplyOutwardReportFilters34() {
+  opFetchOutwardReportData34();
+}
+
+function opClearOutwardReportFilters34() {
+  if (document.getElementById("owFltPlant34")) document.getElementById("owFltPlant34").value = "ALL";
+  if (document.getElementById("owFltStatus34")) document.getElementById("owFltStatus34").value = "ALL";
+  if (document.getElementById("owFltDateType34")) document.getElementById("owFltDateType34").value = "LOADING_DATE";
+  if (document.getElementById("owFltFromDate34")) document.getElementById("owFltFromDate34").value = "";
+  if (document.getElementById("owFltToDate34")) document.getElementById("owFltToDate34").value = "";
+  if (document.getElementById("owFltLimit34")) document.getElementById("owFltLimit34").value = "5000";
+  if (document.getElementById("owFltCust34")) document.getElementById("owFltCust34").value = "";
+  if (document.getElementById("owFltTpt34")) document.getElementById("owFltTpt34").value = "";
+  if (document.getElementById("owFltVeh34")) document.getElementById("owFltVeh34").value = "";
+  if (document.getElementById("owFltSearch34")) document.getElementById("owFltSearch34").value = "";
+
+  opFetchOutwardReportData34();
+}
+
+function opPrevPage34() {
+  if (owCurrentPage34 > 1) {
+    owCurrentPage34--;
+    opRenderOutwardReportTable34(owFilteredRecords34);
+  }
+}
+
+function opNextPage34() {
+  var totalPages = Math.ceil((owFilteredRecords34.length || 0) / owPageSize34);
+  if (owCurrentPage34 < totalPages) {
+    owCurrentPage34++;
+    opRenderOutwardReportTable34(owFilteredRecords34);
+  }
+}
+
+function opChangePageSize34() {
+  var pSize = document.getElementById("owPageSizeSel34") ? parseInt(document.getElementById("owPageSizeSel34").value, 10) : 300;
+  owPageSize34 = pSize || 300;
+  owCurrentPage34 = 1;
+  opRenderOutwardReportTable34(owFilteredRecords34);
+}
+
+function opRenderOutwardReportTable34(records) {
+  var tbody = document.getElementById("owTableBody34");
+  if (!tbody) return;
+
+  if (!records || records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="27" style="text-align:center; color:var(--sub); padding:30px;">No outward records found matching the selected filters.</td></tr>';
+    if (document.getElementById("owCount34")) document.getElementById("owCount34").textContent = "0 records displayed.";
+    if (document.getElementById("owSummary34")) document.getElementById("owSummary34").textContent = "Total Order Qty: 0 | Total Dispatched: 0";
+    if (document.getElementById("owPageInfo34")) document.getElementById("owPageInfo34").textContent = "Page 0 of 0";
+    return;
+  }
+
+  var totalRecords = records.length;
+  var totalPages = Math.ceil(totalRecords / owPageSize34);
+  if (owCurrentPage34 > totalPages) owCurrentPage34 = totalPages;
+  if (owCurrentPage34 < 1) owCurrentPage34 = 1;
+
+  var startIdx = (owCurrentPage34 - 1) * owPageSize34;
+  var endIdx = Math.min(startIdx + owPageSize34, totalRecords);
+  var pageRecords = records.slice(startIdx, endIdx);
+
+  var totOrd = 0, totPgi = 0, totDisp = 0, totShort = 0;
+  records.forEach(function(r) {
+    totOrd += (r.orderQty || 0);
+    totPgi += (r.pgiQty || 0);
+    totDisp += (r.dispatchQty || 0);
+    totShort += (r.shortQty || r.shortageQty || 0);
+  });
+
+  var html = pageRecords.map(function(r, idx) {
+    var globalIdx = startIdx + idx + 1;
+    var badgeClass = "badge-sub";
+    var stNorm = (r.status || r.orderStatus || "").toUpperCase();
+    if (stNorm === "DISPATCHED" || stNorm === "CONFIRMED") badgeClass = "badge-ok";
+    else if (stNorm === "PGI DONE" || stNorm === "PGI") badgeClass = "badge-ok";
+    else if (stNorm === "COMPLETED") badgeClass = "badge-ok";
+    else if (stNorm === "PICKING") badgeClass = "badge-sub";
+    else badgeClass = "badge-warn";
+
+    var sQty = (r.shortQty || r.shortageQty || 0);
+    var shortColor = sQty > 0 ? "color:#dc2626; font-weight:700;" : "color:var(--sub);";
+
+    return '<tr>' +
+      '<td style="text-align:center; color:var(--sub); font-weight:600;">' + globalIdx + '</td>' +
+      '<td><strong class="row-mono">' + (r.plant || 'BB04') + '</strong></td>' +
+      '<td><strong class="row-mono" style="color:var(--p);">' + (r.salesDoc || r.salesDocument || '-') + '</strong></td>' +
+      '<td>' + (r.orderDate || '-') + '</td>' +
+      '<td><strong>' + (r.custName || r.customerName || '-') + '</strong></td>' +
+      '<td>' + (r.custRef || r.customerRefNo || '-') + '</td>' +
+      '<td><strong class="row-mono" style="color:#2563eb;">' + (r.sku || '-') + '</strong></td>' +
+      '<td style="font-size:11px;">' + (r.desc || '-') + '</td>' +
+      '<td><span class="row-mono">' + (r.batch || '-') + '</span></td>' +
+      '<td style="text-align:right; font-weight:700;">' + (r.orderQty || 0) + '</td>' +
+      '<td style="text-align:right; font-weight:700; color:#16a34a;">' + (r.pgiQty || 0) + '</td>' +
+      '<td style="text-align:right; font-weight:700; color:#0284c7;">' + (r.dispatchQty || 0) + '</td>' +
+      '<td style="text-align:right; ' + shortColor + '">' + sQty + '</td>' +
+      '<td style="text-align:center;"><span class="badge ' + badgeClass + '">' + (r.status || r.orderStatus || 'Pending') + '</span></td>' +
+      '<td><strong class="row-mono">' + (r.vehNum || r.vehicleNumber || '-') + '</strong></td>' +
+      '<td>' + (r.drNum || r.driverNumber || '-') + '</td>' +
+      '<td>' + (r.tptName || '-') + '</td>' +
+      '<td>' + (r.loadSup || r.loadingSupervisor || '-') + '</td>' +
+      '<td>' + (r.billSup || r.billingSupervisor || '-') + '</td>' +
+      '<td style="text-align:center;">' + (r.shift || '-') + '</td>' +
+      '<td>' + (r.loadDate || r.loadingDate || '-') + '</td>' +
+      '<td>' + (r.contractor || r.contractorName || '-') + '</td>' +
+      '<td>' + (r.startTime || '-') + '</td>' +
+      '<td>' + (r.endTime || '-') + '</td>' +
+      '<td style="font-size:11px;">' + (r.allocRemark || r.allocationRemark || '-') + '</td>' +
+      '<td style="font-size:11px;">' + (r.shortRemark || r.shortageRemark || '-') + '</td>' +
+      '<td style="font-size:11px; color:#dc2626;">' + (r.shortReason || r.shortageReason || '-') + '</td>' +
+      '</tr>';
+  }).join("");
+
+  tbody.innerHTML = html;
+
+  if (document.getElementById("owCount34")) {
+    document.getElementById("owCount34").textContent = "Showing " + (startIdx + 1) + "-" + endIdx + " of " + totalRecords.toLocaleString() + " line items";
+  }
+  if (document.getElementById("owSummary34")) {
+    document.getElementById("owSummary34").textContent = "Total Order Qty: " + totOrd.toLocaleString() + " | Total PGI: " + totPgi.toLocaleString() + " | Total Dispatched: " + totDisp.toLocaleString() + " | Total Shortage: " + totShort.toLocaleString();
+  }
+  if (document.getElementById("owPageInfo34")) {
+    document.getElementById("owPageInfo34").textContent = "Page " + owCurrentPage34 + " of " + totalPages;
+  }
+
+  var prevBtn = document.getElementById("owBtnPrev34");
+  var nextBtn = document.getElementById("owBtnNext34");
+  if (prevBtn) prevBtn.disabled = (owCurrentPage34 <= 1);
+  if (nextBtn) nextBtn.disabled = (owCurrentPage34 >= totalPages);
+}
+
+function opExportOutwardReportExcel34() {
+  if (!owFilteredRecords34 || owFilteredRecords34.length === 0) {
+    alert("No data available to export.");
+    return;
+  }
+
+  var exportData = owFilteredRecords34.map(function(r, idx) {
+    return {
+      "Sr.No": idx + 1,
+      "Plant": r.plant,
+      "Sales Document": r.salesDoc || r.salesDocument,
+      "Order Date": r.orderDate,
+      "Customer Name": r.custName || r.customerName,
+      "Customer Ref No": r.custRef || r.customerRefNo,
+      "SKU": r.sku,
+      "Description": r.desc,
+      "Batch": r.batch,
+      "Order Qty": r.orderQty,
+      "PGI Qty": r.pgiQty,
+      "Dispatch Qty": r.dispatchQty,
+      "Shortage Qty": r.shortQty || r.shortageQty,
+      "Order Status": r.status || r.orderStatus,
+      "Vehicle Number": r.vehNum || r.vehicleNumber,
+      "Driver Contact": r.drNum || r.driverNumber,
+      "TPT Name": r.tptName,
+      "Loading Supervisor": r.loadSup || r.loadingSupervisor,
+      "Billing Supervisor": r.billSup || r.billingSupervisor,
+      "Shift": r.shift,
+      "Loading Date": r.loadDate || r.loadingDate,
+      "Contractor Name": r.contractor || r.contractorName,
+      "Loading Start Time": r.startTime,
+      "Loading End Time": r.endTime,
+      "Allocation Remark": r.allocRemark || r.allocationRemark,
+      "Shortage Remark": r.shortRemark || r.shortageRemark,
+      "Shortage Reason": r.shortReason || r.shortageReason
+    };
+  });
+
+  var ws = XLSX.utils.json_to_sheet(exportData);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Outward_MIS_Report");
+
+  var fileName = "Outward_MIS_Report_" + (activeWarehouse || "ALL") + "_" + (new Date().toISOString().slice(0,10)) + ".xlsx";
+  XLSX.writeFile(wb, fileName);
+}
+
 // Global click to close dropdowns
 document.addEventListener('click', function(e) {
   var drops = document.querySelectorAll('.dropdown-list');
@@ -17679,6 +18734,204 @@ document.addEventListener('click', function(e) {
         </div>
       </div>
     </div>
+  <!-- PAGE 34: OUTWARD REPORT SUB-MODULE -->
+<div class="pg" id="pg34" style="margin:0!important; padding:4px 14px 20px!important; width:100%!important; box-sizing:border-box;">
+  <div style="background:var(--card-bg); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border:1px solid var(--card-bdr); box-shadow:var(--card-sh); border-radius:14px; padding:18px; display:flex; flex-direction:column; gap:14px; width:100%;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:4px;">
+      <div>
+        <div style="font-size:16px; font-weight:800; color:var(--tx); display:flex; align-items:center; gap:8px;">
+          <span>&#x1F4CA;</span> Outward &amp; Dispatch Report (From Outward_MIS)
+        </div>
+        <div style="font-size:12px; color:var(--sub); margin-top:2px;">View, filter, and extract line-level sales outward dispatch logs, item SKUs, vehicle details, and supervisor tracking.</div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button class="btn btn-g" onclick="opExportOutwardReportExcel34()" style="height:34px; font-weight:700;">&#x1F4CA; Export Excel</button>
+        <button class="btn btn-p" onclick="loadOutwardReportPage34()" style="height:34px; font-weight:700;">&#x1F504; Refresh</button>
+      </div>
+    </div>
+    <div class="divider"></div>
+
+    <!-- Summary KPI Cards Grid -->
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:12px; margin-bottom:14px;">
+      <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:10px 14px; text-align:center;">
+        <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">Total Orders</div>
+        <div style="font-size:18px; font-weight:800; color:#2563eb; margin-top:2px;" id="owMetricTotalOrders34">0</div>
+      </div>
+      <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:10px 14px; text-align:center;">
+        <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">Total Order Qty &#x1F4E6;</div>
+        <div style="font-size:18px; font-weight:800; color:#16a34a; margin-top:2px;" id="owMetricOrderQty34">0</div>
+      </div>
+      <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:10px 14px; text-align:center;">
+        <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">Dispatched Qty &#x1F69A;</div>
+        <div style="font-size:18px; font-weight:800; color:#0284c7; margin-top:2px;" id="owMetricDispatchQty34">0</div>
+      </div>
+      <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:10px 14px; text-align:center;">
+        <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">Shortage Qty &#x26A0;&#xFE0F;</div>
+        <div style="font-size:18px; font-weight:800; color:#dc2626; margin-top:2px;" id="owMetricShortageQty34">0</div>
+      </div>
+      <div style="background:var(--bg-card); border:1px solid var(--bdr); border-radius:8px; padding:10px 14px; text-align:center;">
+        <div style="font-size:11px; color:var(--sub); font-weight:700; text-transform:uppercase;">Dispatched / PGI Done &#x2705;</div>
+        <div style="font-size:18px; font-weight:800; color:#059669; margin-top:2px;" id="owMetricCompleted34">0</div>
+      </div>
+    </div>
+
+    <!-- Multi-Column Filter Bar -->
+    <div style="background:color-mix(in srgb, var(--p) 5%, var(--card-bg)); border:1.5px solid color-mix(in srgb, var(--p) 30%, var(--bdr)); border-radius:8px; padding:12px; margin-bottom:14px;">
+      <div style="font-size:12px; font-weight:700; color:var(--p); margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+        <span>&#x1F50D;</span> Report Filters &amp; Extract Parameters:
+      </div>
+      
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; margin-bottom:10px;">
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Plant / Warehouse</label>
+          <select id="owFltPlant34" class="select-in" style="width:100%; height:32px; font-size:12px;" onchange="opApplyOutwardReportFilters34()">
+            <option value="ALL">&#x1F310; All Warehouses</option>
+            <option value="BB02">BB02 - Factory FG</option>
+            <option value="BB04">BB04 - Lakhowal</option>
+            <option value="BB13">BB13 - Jammu</option>
+            <option value="BB11">BB11 - Ghaziabad</option>
+            <option value="BB12">BB12 - Export</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Order Status</label>
+          <select id="owFltStatus34" class="select-in" style="width:100%; height:32px; font-size:12px;" onchange="opApplyOutwardReportFilters34()">
+            <option value="ALL">&#x1F310; All Statuses</option>
+            <option value="Pending">&#x23F3; Pending Orders</option>
+            <option value="Picking">&#x1F4E6; Picking Status</option>
+            <option value="Dispatched">&#x1F69A; Confirmed / Dispatched</option>
+            <option value="PGI Done">&#x1F504; PGI Done</option>
+            <option value="Completed">&#x2705; Completed</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Date Range Filter By</label>
+          <select id="owFltDateType34" class="select-in" style="width:100%; height:32px; font-size:12px;" onchange="opApplyOutwardReportFilters34()">
+            <option value="LOADING_DATE">&#x1F4C5; Loading Date</option>
+            <option value="ORDER_DATE">&#x1F4D3; Order Date</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">From Date</label>
+          <input type="date" id="owFltFromDate34" class="input-in" style="width:100%; height:32px; font-size:12px;" onchange="opApplyOutwardReportFilters34()">
+        </div>
+
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">To Date</label>
+          <input type="date" id="owFltToDate34" class="input-in" style="width:100%; height:32px; font-size:12px;" onchange="opApplyOutwardReportFilters34()">
+        </div>
+
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Backend Range Limit</label>
+          <select id="owFltLimit34" class="select-in" style="width:100%; height:32px; font-size:12px;" onchange="opApplyOutwardReportFilters34()">
+            <option value="5000" selected>&#x26A1; Up to 5,000 Records</option>
+            <option value="10000">&#x1F4CA; Up to 10,000 Records</option>
+            <option value="ALL">&#x1F310; All Records in Date Range</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; align-items:flex-end;">
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Customer Name</label>
+          <input type="text" id="owFltCust34" class="input-in" style="width:100%; height:32px; font-size:12px;" placeholder="Filter customer..." oninput="opApplyOutwardReportFilters34()">
+        </div>
+
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Transporter (TPT)</label>
+          <input type="text" id="owFltTpt34" class="input-in" style="width:100%; height:32px; font-size:12px;" placeholder="Filter transporter..." oninput="opApplyOutwardReportFilters34()">
+        </div>
+
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Vehicle Number</label>
+          <input type="text" id="owFltVeh34" class="input-in" style="width:100%; height:32px; font-size:12px;" placeholder="e.g. PB10AB1234" oninput="opApplyOutwardReportFilters34()">
+        </div>
+
+        <div style="grid-column: span 2;">
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Universal Search</label>
+          <div style="position:relative;">
+            <input type="text" id="owFltSearch34" class="input-in" style="width:100%; height:32px; padding-left:28px; font-size:12px;" placeholder="Search Sales Doc, SKU, Description, Driver, Supervisor, Contractor..." oninput="opApplyOutwardReportFilters34()">
+            <span style="position:absolute; left:8px; top:50%; transform:translateY(-50%); font-size:12px; color:var(--p);">&#x1F50D;</span>
+          </div>
+        </div>
+
+        <div>
+          <button class="btn" onclick="opClearOutwardReportFilters34()" style="width:100%; height:32px; font-size:11.5px; font-weight:700; background:#64748b; color:#fff;">&#x2715; Clear Filters</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="owLoader34" style="display:none; text-align:center; padding:24px; color:var(--sub);">
+      <span class="spin spin-p"></span> Loading Outward Report from Outward_MIS...
+    </div>
+
+    <!-- Report Table Wrapper -->
+    <div style="overflow:auto; max-height:550px; border:1px solid var(--bdr); border-radius:6px; background:var(--bg-card);">
+      <table class="tbl" style="min-width:3200px; border-collapse:collapse; font-size:12px;" id="owTable34">
+        <thead>
+          <tr style="background:var(--thead); position:sticky; top:0; z-index:10;">
+            <th style="width:40px; text-align:center;">#</th>
+            <th style="width:70px;">Plant</th>
+            <th style="width:120px;">Sales Doc #</th>
+            <th style="width:100px;">Order Date</th>
+            <th style="width:200px;">Customer Name</th>
+            <th style="width:130px;">Customer Ref</th>
+            <th style="width:110px;">SKU</th>
+            <th style="width:220px;">Description</th>
+            <th style="width:100px;">Batch</th>
+            <th style="width:90px; text-align:right;">Order Qty</th>
+            <th style="width:90px; text-align:right;">PGI Qty</th>
+            <th style="width:90px; text-align:right;">Dispatch Qty</th>
+            <th style="width:90px; text-align:right;">Shortage Qty</th>
+            <th style="width:110px; text-align:center;">Order Status</th>
+            <th style="width:120px;">Vehicle Number</th>
+            <th style="width:110px;">Driver Contact</th>
+            <th style="width:150px;">TPT Name</th>
+            <th style="width:130px;">Loading Sup.</th>
+            <th style="width:130px;">Billing Sup.</th>
+            <th style="width:80px; text-align:center;">Shift</th>
+            <th style="width:100px;">Loading Date</th>
+            <th style="width:130px;">Contractor</th>
+            <th style="width:90px;">Start Time</th>
+            <th style="width:90px;">End Time</th>
+            <th style="width:150px;">Allocation Remark</th>
+            <th style="width:150px;">Shortage Remark</th>
+            <th style="width:140px;">Shortage Reason</th>
+          </tr>
+        </thead>
+        <tbody id="owTableBody34">
+          <tr><td colspan="27" style="text-align:center; color:var(--sub); padding:24px;">Load report data...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer Status & Pagination Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:10px; font-size:12px; color:var(--sub); padding:8px 14px; background:var(--bg-card); border-radius:6px; border:1px solid var(--bdr);">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div id="owCount34">0 records displayed.</div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <label style="font-size:11px; font-weight:700; color:var(--sub);">Rows/Page:</label>
+          <select id="owPageSizeSel34" class="select-in" style="height:28px; padding:2px 6px; font-size:12px;" onchange="opChangePageSize34()">
+            <option value="300" selected>300 Lines</option>
+            <option value="100">100 Lines</option>
+            <option value="50">50 Lines</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button id="owBtnPrev34" class="btn" style="height:28px; padding:0 10px; font-size:12px; font-weight:700; background:#64748b; color:#fff;" onclick="opPrevPage34()">&#x25C0; Prev</button>
+        <span id="owPageInfo34" style="font-weight:700; color:var(--tx); min-width:80px; text-align:center;">Page 1 of 1</span>
+        <button id="owBtnNext34" class="btn" style="height:28px; padding:0 10px; font-size:12px; font-weight:700; background:#2563eb; color:#fff;" onclick="opNextPage34()">Next &#x25B6;</button>
+      </div>
+
+      <div id="owSummary34" style="font-weight:700; color:var(--tx);">Total Order Qty: 0 | Total Dispatched: 0</div>
+    </div>
+
   </div>
 </div>
 

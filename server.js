@@ -2905,7 +2905,137 @@ app.post('/api/gas-bridge', async (req, res) => {
             [Number(r.shortage_qty)||0, r.alloc_remark||'', r.shortage_remark||'', new Date().toISOString(), soNorm]);
           updatedCount++;
         }
-        return res.json({ success: true, result: { status: 'SUCCESS', updatedCount, message: `Refreshed ${updatedCount} operation sheet rows from order checker.` } });
+      case 'opGetOutwardReportData': {
+        const [warehouse, filters = {}] = args;
+        const whNorm = _norm(filters.warehouse || warehouse || "BB04");
+        const statusFlt = (filters.status || "ALL").toString().trim().toUpperCase();
+        const dateType = (filters.dateType || "LOADING_DATE").toString().trim().toUpperCase();
+        const fromDt = filters.fromDate ? String(filters.fromDate).trim() : "";
+        const toDt = filters.toDate ? String(filters.toDate).trim() : "";
+        const custFlt = (filters.customer || "").toString().trim().toUpperCase();
+        const tptFlt = (filters.tpt || "").toString().trim().toUpperCase();
+        const vehFlt = (filters.vehicle || "").toString().trim().toUpperCase();
+        const searchFlt = (filters.search || "").toString().trim().toUpperCase();
+
+        let sql = 'SELECT * FROM operation_sheet WHERE 1=1';
+        const params = [];
+
+        if (whNorm && whNorm !== 'ALL') {
+          sql += ' AND UPPER(plant) = ?';
+          params.push(whNorm);
+        }
+
+        if (statusFlt && statusFlt !== 'ALL') {
+          sql += ' AND UPPER(status) = ?';
+          params.push(statusFlt);
+        }
+
+        if (fromDt) {
+          const col = (dateType === 'ORDER_DATE') ? 'order_date' : 'loading_date';
+          sql += ` AND ${col} >= ?`;
+          params.push(fromDt);
+        }
+
+        if (toDt) {
+          const col = (dateType === 'ORDER_DATE') ? 'order_date' : 'loading_date';
+          sql += ` AND ${col} <= ?`;
+          params.push(toDt);
+        }
+
+        if (custFlt) {
+          sql += ' AND UPPER(customer_name) LIKE ?';
+          params.push(`%${custFlt}%`);
+        }
+
+        if (tptFlt) {
+          sql += ' AND UPPER(tpt_name) LIKE ?';
+          params.push(`%${tptFlt}%`);
+        }
+
+        if (vehFlt) {
+          sql += ' AND UPPER(vehicle_no) LIKE ?';
+          params.push(`%${vehFlt}%`);
+        }
+
+        sql += ' ORDER BY id DESC';
+
+        const limitVal = Number(filters.limit) || 5000;
+        if (limitVal > 0) {
+          sql += ` LIMIT ${limitVal}`;
+        }
+
+        const rows = await query(sql, params);
+
+        let totalOrders = new Set();
+        let totalOrderQty = 0;
+        let totalDispatchQty = 0;
+        let totalShortageQty = 0;
+        let completedCount = 0;
+
+        const records = rows.filter(r => {
+          if (searchFlt) {
+            const rowText = `${r.plant} ${r.order_no} ${r.customer_name} ${r.sku} ${r.material_desc} ${r.vehicle_no} ${r.tpt_name} ${r.loading_supervisor} ${r.contractor_name}`.toUpperCase();
+            if (rowText.indexOf(searchFlt) === -1) return false;
+          }
+          return true;
+        }).map(r => {
+          if (r.order_no) totalOrders.add(_norm(r.order_no));
+          const oQty = Number(r.order_qty) || 0;
+          const dQty = Number(r.dispatch_qty) || 0;
+          const sQty = Number(r.shortage_qty) || 0;
+          totalOrderQty += oQty;
+          totalDispatchQty += dQty;
+          totalShortageQty += sQty;
+
+          const st = (r.status || '').toString().trim();
+          if (st.toLowerCase().includes('pgi') || st.toLowerCase().includes('dispatched') || st.toLowerCase().includes('completed')) {
+            completedCount++;
+          }
+
+          return {
+            plant: r.plant || 'BB04',
+            salesDoc: r.order_no || '',
+            orderDate: r.order_date || '',
+            custName: r.customer_name || '',
+            custRef: r.customer_ref || '',
+            sku: r.sku || '',
+            desc: r.material_desc || '',
+            batch: r.batch || '',
+            orderQty: oQty,
+            pgiQty: Number(r.pgi_qty) || 0,
+            dispatchQty: dQty,
+            shortQty: sQty,
+            status: r.status || 'Pending',
+            vehNum: r.vehicle_no || '',
+            drNum: r.driver_no || '',
+            tptName: r.tpt_name || '',
+            loadSup: r.loading_supervisor || '',
+            billSup: r.billing_supervisor || '',
+            shift: r.shift || '',
+            loadDate: r.loading_date || '',
+            contractor: r.contractor_name || '',
+            startTime: r.start_time || '',
+            endTime: r.end_time || '',
+            allocRemark: r.alloc_remark || '',
+            shortRemark: r.shortage_remark || '',
+            shortReason: r.shortage_reason || ''
+          };
+        });
+
+        return res.json({
+          success: true,
+          result: {
+            status: "OK",
+            records: records,
+            metrics: {
+              totalOrders: totalOrders.size,
+              totalOrderQty: totalOrderQty,
+              totalDispatchQty: totalDispatchQty,
+              totalShortageQty: totalShortageQty,
+              completedCount: completedCount
+            }
+          }
+        });
       }
 
       // -------------------------------------------------------------
