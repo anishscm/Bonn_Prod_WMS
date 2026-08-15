@@ -9,11 +9,16 @@ assert.deepEqual(parseBatchJson('[{"batch":"B1","qty":10}]'), [{ batch: 'B1', qt
 function makeDb({ failMis = false } = {}) {
   const state = {
     stock: [{ id: 1, warehouse_code: 'BB04', sloc: 'FG01', sku_code: 'SKU1', batch_qty: [{ batch: '000123', qty: 70 }], total_unrestricted: 70 }],
-    operation: { order_status: 'Pending', obd: '' }, mis: [], committed: false, rolledBack: false, released: false
+    operation: { order_status: 'Pending', obd: '' },
+    mis: [], committed: false, rolledBack: false, released: false
   };
   let snapshot = null;
   const clone = () => JSON.parse(JSON.stringify(state));
-  const restore = s => Object.assign(state, s);
+  const restore = s => {
+    const rolledBack = state.rolledBack;
+    Object.assign(state, s);
+    state.rolledBack = rolledBack;
+  };
   const client = {
     async query(sql, params = []) {
       const compact = sql.replace(/\s+/g, ' ').trim();
@@ -22,9 +27,14 @@ function makeDb({ failMis = false } = {}) {
       if (compact === 'ROLLBACK') { state.rolledBack = true; restore(snapshot); return { rows: [] }; }
       if (compact.startsWith('SELECT id, warehouse_code')) return { rows: state.stock.map(r => ({ ...r })) };
       if (compact.startsWith('UPDATE wms.sap_stock SET batch_qty')) {
-        state.stock[0].batch_qty = JSON.parse(params[0]); state.stock[0].total_unrestricted = Number(params[1]); return { rows: [] };
+        state.stock[0].batch_qty = JSON.parse(params[0]);
+        state.stock[0].total_unrestricted = Number(params[1]);
+        return { rows: [] };
       }
-      if (compact.startsWith('UPDATE wms.sap_stock SET total_unrestricted')) { state.stock[0].total_unrestricted = Number(params[0]); return { rows: [] }; }
+      if (compact.startsWith('UPDATE wms.sap_stock SET total_unrestricted')) {
+        state.stock[0].total_unrestricted = Number(params[0]);
+        return { rows: [] };
+      }
       return { rows: [] };
     },
     release() { state.released = true; }
@@ -32,7 +42,10 @@ function makeDb({ failMis = false } = {}) {
   const mapping = {
     sapStock: { schema: 'wms', table: 'sap_stock' },
     operationSheet: { update: async () => { state.operation.order_status = 'PGI Done'; } },
-    outwardMis: { append: async (_client, row) => { if (failMis) throw new Error('MIS_APPEND_TEST_FAILURE'); state.mis.push(row); } }
+    outwardMis: { append: async (_client, row) => {
+      if (failMis) throw new Error('MIS_APPEND_TEST_FAILURE');
+      state.mis.push(row);
+    } }
   };
   return { db: { async connect() { return client; } }, state, mapping };
 }
