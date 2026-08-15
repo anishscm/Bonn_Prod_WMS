@@ -1,0 +1,9 @@
+{
+  "initial": {
+    "stock": {"BB04|FG01|TEST-SKU-P6|2026-08": {"qty": 100}},
+    "alloc": {"BB04|SO-P6-001|TEST-SKU-P6": {"qty": 20}},
+    "binTx": [], "outward": [], "operation": []
+  },
+  "request": {"warehouse":"BB04","bin":"FG01","sku":"TEST-SKU-P6","mfg":"2026-08","qty":10,"so":"SO-P6-001"},
+  "expected": {"stock_qty":90,"allocation_qty":10,"bin_tx_count":1,"outward_count":1,"operation_count":1}
+}
