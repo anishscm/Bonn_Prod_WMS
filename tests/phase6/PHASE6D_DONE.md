@@ -1,0 +1,1 @@
+Phase 6D PostgreSQL transaction gate has been added. It is disposable, TEMP-table based, and ends with ROLLBACK. Production Supabase is not used by this gate.
