@@ -2,7 +2,7 @@ name: Phase 6D PostgreSQL Transaction Test
 
 on:
   push:
-    branches: [phase-6b-inventory-parity]
+    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity]
   pull_request:
     branches: [main]
 
@@ -29,3 +29,7 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase6d_pg_transaction_test.sql
+      - name: Run WMS-shaped transaction parity contract
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase6d_wms_shape_transaction_test.sql
