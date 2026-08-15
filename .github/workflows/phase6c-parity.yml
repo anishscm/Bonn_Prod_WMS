@@ -1,0 +1,21 @@
+name: Phase 6C Parity Harness
+
+on:
+  push:
+    branches: [phase-6b-inventory-parity]
+  pull_request:
+    branches: [main]
+
+jobs:
+  parity-model:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: phase6/parity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run deterministic inventory invariants
+        run: node fixtures/run.js
