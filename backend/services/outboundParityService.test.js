@@ -25,10 +25,7 @@ assert.doesNotThrow(() => assertProductionMapping(mapping));
 function makeDb({ failAdapter = false } = {}) {
   const calls = [];
   const state = {
-    stock: [
-      { id: 1, qty: 60 },
-      { id: 2, qty: 50 }
-    ],
+    stock: [{ id: 1, qty: 60 }, { id: 2, qty: 50 }],
     allocationDeleted: false,
     binTx: 0,
     committed: false,
@@ -36,14 +33,27 @@ function makeDb({ failAdapter = false } = {}) {
     released: false,
     adapters: { sap: 0, operation: 0, outward: 0 }
   };
+  let snapshot = null;
+
+  const cloneState = () => JSON.parse(JSON.stringify(state));
+  const restoreState = (saved) => {
+    state.stock = saved.stock;
+    state.allocationDeleted = saved.allocationDeleted;
+    state.binTx = saved.binTx;
+    state.adapters = saved.adapters;
+  };
 
   const client = {
     async query(sql, params = []) {
       calls.push({ sql, params });
       const compact = sql.replace(/\s+/g, ' ').trim();
-      if (compact === 'BEGIN') return { rows: [] };
+      if (compact === 'BEGIN') { snapshot = cloneState(); return { rows: [] }; }
       if (compact === 'COMMIT') { state.committed = true; return { rows: [] }; }
-      if (compact === 'ROLLBACK') { state.rolledBack = true; return { rows: [] }; }
+      if (compact === 'ROLLBACK') {
+        state.rolledBack = true;
+        if (snapshot) restoreState(snapshot);
+        return { rows: [] };
+      }
       if (compact.startsWith('SELECT') && compact.includes('FOR UPDATE')) {
         return { rows: state.stock.filter(r => r.qty > 0).map(r => ({ id: r.id, qty: r.qty })) };
       }
@@ -103,7 +113,7 @@ function makeDb({ failAdapter = false } = {}) {
   assert.equal(ok.state.rolledBack, false);
   assert.equal(ok.state.released, true);
 
-  // Failure: downstream MIS adapter throws after earlier writes; transaction must rollback.
+  // Failure: downstream MIS adapter throws after earlier writes; rollback restores every mutation.
   const bad = makeDb({ failAdapter: true });
   const failure = await confirmOutbound({
     db: bad.db,
@@ -115,6 +125,10 @@ function makeDb({ failAdapter = false } = {}) {
   });
   assert.equal(failure.status, 'ERROR');
   assert.equal(failure.transaction, 'ROLLED_BACK');
+  assert.deepEqual(bad.state.stock.map(r => r.qty), [60, 50]);
+  assert.equal(bad.state.allocationDeleted, false);
+  assert.equal(bad.state.binTx, 0);
+  assert.deepEqual(bad.state.adapters, { sap: 0, operation: 0, outward: 0 });
   assert.equal(bad.state.committed, false);
   assert.equal(bad.state.rolledBack, true);
   assert.equal(bad.state.released, true);
