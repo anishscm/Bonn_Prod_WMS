@@ -15,9 +15,8 @@ const mapping = {
   phyStock: { schema: 'wms', table: 'phy_stk_entry', id: 'id', qty: 'qty', plant: 'plant', sku: 'sku', bin: 'bin', mfg: 'mfg_month', updatedAt: 'updated_at' },
   phyAllocation: { schema: 'wms', table: 'phy_stk_allocation', warehouse: 'warehouse', so: 'so_number' },
   binTx: { schema: 'wms', table: 'bin_txin', warehouse: 'warehouse', timestamp: 'event_timestamp', bin: 'bin', sku: 'sku', qty: 'qty', mfg: 'batch', type: 'transaction_type', reference: 'doc_number', username: 'user_id' },
-  sapDump: { deduct: async () => {} },
   operationSheet: { update: async () => {} },
-  outwardMis: { append: async () => {} }
+  outwardMis: { update: async () => {} }
 };
 
 assert.doesNotThrow(() => assertProductionMapping(mapping));
@@ -31,7 +30,7 @@ function makeDb({ failAdapter = false } = {}) {
     committed: false,
     rolledBack: false,
     released: false,
-    adapters: { sap: 0, operation: 0, outward: 0 }
+    adapters: { operation: 0, outward: 0 }
   };
   let snapshot = null;
 
@@ -55,7 +54,8 @@ function makeDb({ failAdapter = false } = {}) {
         return { rows: [] };
       }
       if (compact.startsWith('SELECT') && compact.includes('FOR UPDATE')) {
-        return { rows: state.stock.filter(r => r.qty > 0).map(r => ({ id: r.id, qty: r.qty })) };
+        // Gold Master opConfirmOutboundDeductStock uses the first matching row only.
+        return { rows: state.stock.slice(0, 1).map(r => ({ id: r.id, qty: r.qty })) };
       }
       if (compact.startsWith('DELETE FROM "wms"."phy_stk_entry"')) {
         const id = params[0];
@@ -84,15 +84,14 @@ function makeDb({ failAdapter = false } = {}) {
   const db = { async connect() { return client; } };
   const testMapping = {
     ...mapping,
-    sapDump: { deduct: async () => { state.adapters.sap += 1; } },
-    operationSheet: { update: async () => { state.adapters.operation += 1; } },
-    outwardMis: { append: async () => { state.adapters.outward += 1; if (failAdapter) throw new Error('OUTWARD_ADAPTER_TEST_FAILURE'); } }
+    operationSheet: { update: async () => { state.adapters.operation += 1; if (failAdapter) throw new Error('OPERATION_ADAPTER_TEST_FAILURE'); } },
+    outwardMis: { update: async () => { state.adapters.outward += 1; } }
   };
   return { db, state, calls, mapping: testMapping };
 }
 
 (async () => {
-  // Success: 60 + 50 = 110 available; request 100 must consume both rows.
+  // Gold Master parity: only the first matching physical row is deducted.
   const ok = makeDb();
   const success = await confirmOutbound({
     db: ok.db,
@@ -105,15 +104,15 @@ function makeDb({ failAdapter = false } = {}) {
   assert.equal(success.status, 'SUCCESS');
   assert.equal(success.transaction, 'COMMITTED');
   assert.equal(ok.state.stock[0].qty, 0);
-  assert.equal(ok.state.stock[1].qty, 10);
+  assert.equal(ok.state.stock[1].qty, 50); // GAS does not roll into a second stock row.
   assert.equal(ok.state.allocationDeleted, true);
   assert.equal(ok.state.binTx, 1);
-  assert.deepEqual(ok.state.adapters, { sap: 1, operation: 1, outward: 1 });
+  assert.deepEqual(ok.state.adapters, { operation: 1, outward: 1 });
   assert.equal(ok.state.committed, true);
   assert.equal(ok.state.rolledBack, false);
   assert.equal(ok.state.released, true);
 
-  // Failure: downstream MIS adapter throws after earlier writes; rollback restores every mutation.
+  // Failure after the first adapter write must rollback the DB transaction.
   const bad = makeDb({ failAdapter: true });
   const failure = await confirmOutbound({
     db: bad.db,
@@ -128,10 +127,10 @@ function makeDb({ failAdapter = false } = {}) {
   assert.deepEqual(bad.state.stock.map(r => r.qty), [60, 50]);
   assert.equal(bad.state.allocationDeleted, false);
   assert.equal(bad.state.binTx, 0);
-  assert.deepEqual(bad.state.adapters, { sap: 0, operation: 0, outward: 0 });
+  assert.deepEqual(bad.state.adapters, { operation: 0, outward: 0 });
   assert.equal(bad.state.committed, false);
   assert.equal(bad.state.rolledBack, true);
   assert.equal(bad.state.released, true);
 
-  console.log('Phase 6E outbound transaction parity harness: PASS');
+  console.log('Phase 6E Gold-Master outbound confirm parity harness: PASS');
 })();
