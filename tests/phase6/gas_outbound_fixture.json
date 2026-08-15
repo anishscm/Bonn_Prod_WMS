@@ -1,0 +1,33 @@
+{
+  "test_id": "OUT-002",
+  "source_function": "opConfirmOutboundDeductStock",
+  "priority": "P0",
+  "scenario": "Controlled outbound physical deduction",
+  "input": {
+    "warehouse": "BB04",
+    "so_number": "TEST-SO-P6",
+    "obd": "12345678",
+    "sku": "TEST-SKU-P6",
+    "bin": "TEST-FG01",
+    "mfg_month": "2026-08",
+    "requested_qty": 10
+  },
+  "seed_state": {
+    "physical_stock_qty": 100,
+    "physical_allocation_qty": 20
+  },
+  "gas_capture": {
+    "response": null,
+    "post_operation_state": null,
+    "captured": false
+  },
+  "sql_capture": {
+    "response": null,
+    "post_operation_state": null,
+    "captured": false
+  },
+  "parity": {
+    "status": "NOT_CAPTURED",
+    "rule": "Do not mark PASS until GAS response and post-operation state are compared with SQL response and post-operation state."
+  }
+}
