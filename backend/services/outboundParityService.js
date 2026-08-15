@@ -1,25 +1,17 @@
 /**
- * Phase 6E — Outbound parity transaction service.
+ * Phase 6E — Gold-Master parity service for opConfirmOutboundDeductStock.
  *
- * Production mappings are deliberately injected. The verified Supabase schema
- * confirms the concrete column names, but business semantics (especially SAP
- * dump batch representation and GAS status values) must not be guessed.
+ * This flow is NOT the Batch Picking / PGI flow. The supplied GAS source shows
+ * opConfirmOutboundDeductStock directly mutates PHY_STK_ENTRY, removes
+ * PHY_STK_ALLOCATION rows, writes BIN_TXIN, and updates Operation_Sheet and
+ * Outward_MIS to "Confirmed". It does not mutate SAP_STK_DUMP.
  *
- * Required atomic side-effects:
- *   1) physical stock deduction (wms.phy_stk_entry)
- *   2) physical allocation removal (wms.phy_stk_allocation)
- *   3) BIN_TXIN audit row(s) (wms.bin_txin)
- *   4) SAP stock effect (wms.sap_stk_dump) via verified adapter
- *   5) Operation Sheet effect via verified adapter
- *   6) Outward MIS effect via verified adapter
- *
- * If any required adapter is missing or throws, the whole transaction rolls back.
+ * Production adapters for Operation Sheet and Outward MIS are deliberately
+ * injected because their row-matching/update semantics must remain explicit.
  */
 
 function qIdent(value) {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
-    throw new Error(`Unsafe SQL identifier: ${value}`);
-  }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`Unsafe SQL identifier: ${value}`);
   return `"${value}"`;
 }
 
@@ -40,26 +32,31 @@ function cleanSku(v) {
   return norm(v).replace(/[^A-Z0-9]/g, '');
 }
 
+function cleanMfg(v) {
+  return String(v ?? '').replace(/^'/, '').trim().toUpperCase();
+}
+
+function matchWhSql(column, targetParam) {
+  return `(upper(trim(${column}::text)) = $${targetParam}
+    OR upper(trim(${column}::text)) = CASE WHEN $${targetParam} = 'BB04' THEN '1002' WHEN $${targetParam} = 'BB02' THEN '1001' ELSE $${targetParam} END
+    OR trim(${column}::text) = ''
+    OR ${column} IS NULL)`;
+}
+
 function assertProductionMapping(mapping) {
   const required = [
     ['phyStock', mapping?.phyStock],
     ['phyAllocation', mapping?.phyAllocation],
     ['binTx', mapping?.binTx],
-    ['sapDump.deduct', mapping?.sapDump?.deduct],
     ['operationSheet.update', mapping?.operationSheet?.update],
-    ['outwardMis.append', mapping?.outwardMis?.append]
+    ['outwardMis.update', mapping?.outwardMis?.update]
   ];
-  const missing = required.filter(([, value]) => typeof value === 'undefined' || value === null || (typeof value !== 'function' && typeof value !== 'object'));
-  if (missing.length) {
-    throw new Error(`Incomplete production mapping: ${missing.map(([name]) => name).join(', ')}`);
-  }
+  const missing = required.filter(([, value]) => value === undefined || value === null || (typeof value !== 'function' && typeof value !== 'object'));
+  if (missing.length) throw new Error(`Incomplete production mapping: ${missing.map(([name]) => name).join(', ')}`);
 }
 
 /**
- * Execute the high-risk outbound operation in one DB transaction.
- *
- * `db` must expose connect() -> client, and the client must expose
- * query()/release(). The mapping is the verified SQL column contract.
+ * Exact parity target: GAS opConfirmOutboundDeductStock(payload).
  */
 async function confirmOutbound({ db, payload, mapping }) {
   assertProductionMapping(mapping);
@@ -67,51 +64,66 @@ async function confirmOutbound({ db, payload, mapping }) {
   try {
     await client.query('BEGIN');
 
+    if (!payload || (!payload.soNumber && (!Array.isArray(payload.soList) || payload.soList.length === 0))) {
+      throw new Error('Invalid confirmation payload: Missing SO/OBD Number(s).');
+    }
+
+    // GAS builds one target list from SO, OBD and soList and de-duplicates it.
+    const targetValues = [];
+    const addTargets = value => {
+      if (value === undefined || value === null || value === '') return;
+      String(value).split(',').forEach(v => {
+        const x = norm(v);
+        if (x && !targetValues.includes(x)) targetValues.push(x);
+      });
+    };
+    addTargets(payload.soNumber);
+    addTargets(payload.obdNumber);
+    if (Array.isArray(payload.soList)) payload.soList.forEach(addTargets);
+
     const wh = norm(payload.warehouse || 'BB04');
-    const plant = norm(payload.plant || wh);
-    const so = norm(payload.soNumber || payload.salesDocument || '');
-    const obd = String(payload.obdNumber || payload.obd || '').trim();
-    if (!obd) throw new Error('8-Digit OBD Number is required.');
-
     const items = Array.isArray(payload.items) ? payload.items : [];
-    if (!items.length) throw new Error('No allocated rows provided for deduction.');
 
-    // ---- 1. Physical stock: lock ALL matching rows before calculating deduction ----
-    // Multiple rows for the same SKU/bin/MFG can exist. Deduct across locked rows
-    // instead of only the first row; otherwise valid stock can be reported short.
+    // 1) GAS updates Operation Sheet and Outward MIS to Confirmed before stock work.
+    await mapping.operationSheet.update(client, {
+      payload, warehouse: wh, targets: targetValues,
+      status: 'Confirmed', dispatchQty: payload.totalDispatchQty || 0
+    });
+    await mapping.outwardMis.update(client, {
+      payload, warehouse: wh, targets: targetValues,
+      status: 'Confirmed', dispatchQty: payload.totalDispatchQty || 0
+    });
+
+    // 2) GAS deducts ONLY the first matching PHY_STK_ENTRY row per item.
+    // It does not perform a multi-row allocation and does not throw when no
+    // matching stock row is found; the BIN_TXIN audit row is still written.
     const p = mapping.phyStock;
     for (const item of items) {
-      let remaining = n(item.allocatedQty ?? item.allocQty);
-      if (remaining <= 0) continue;
+      const deductQty = n(item.allocatedQty ?? item.allocQty);
+      if (deductQty <= 0) continue;
 
-      const params = [plant, cleanSku(item.sku), cleanBin(item.bin), String(item.mfgMonth ?? '').trim()];
+      const params = [
+        wh,
+        cleanSku(item.sku),
+        cleanBin(item.bin),
+        cleanMfg(item.mfgMonth),
+        'NA'
+      ];
       const sql = `
         SELECT ${qIdent(p.id)}, ${qIdent(p.qty)}
         FROM ${qIdent(p.schema)}.${qIdent(p.table)}
-        WHERE ${qIdent(p.plant)} = $1
-          AND regexp_replace(upper(trim(${qIdent(p.sku)})), '[^A-Z0-9]', '', 'g') = $2
-          AND regexp_replace(upper(trim(${qIdent(p.bin)})), '[^A-Z0-9]', '', 'g') = $3
-          AND ($4 = '' OR ${qIdent(p.mfg)}::text = $4)
+        WHERE ${matchWhSql(qIdent(p.plant), 1)}
+          AND regexp_replace(upper(trim(${qIdent(p.sku)}::text)), '[^A-Z0-9]', '', 'g') = $2
+          AND regexp_replace(upper(trim(${qIdent(p.bin)}::text)), '[^A-Z0-9]', '', 'g') = $3
+          AND ($4 = '' OR $4 = 'NA' OR upper(trim(${qIdent(p.mfg)}::text)) = $4 OR upper(trim(${qIdent(p.mfg)}::text)) = 'NA' OR ${qIdent(p.mfg)} IS NULL)
         ORDER BY ${qIdent(p.id)}
+        LIMIT 1
         FOR UPDATE`;
+      const found = await client.query(sql, params);
 
-      const locked = await client.query(sql, params);
-      if (!locked.rows.length) {
-        throw new Error(`Physical stock row not found for ${item.sku}/${item.bin}/${item.mfgMonth || ''}`);
-      }
-
-      const totalAvailable = locked.rows.reduce((sum, row) => sum + n(row[p.qty]), 0);
-      if (totalAvailable < remaining) {
-        throw new Error(`Insufficient physical stock for ${item.sku}: available ${totalAvailable}, requested ${remaining}`);
-      }
-
-      for (const row of locked.rows) {
-        if (remaining <= 0) break;
-        const available = n(row[p.qty]);
-        const take = Math.min(available, remaining);
-        const newQty = available - take;
-        remaining -= take;
-
+      if (found.rows.length) {
+        const row = found.rows[0];
+        const newQty = Math.max(0, n(row[p.qty]) - deductQty);
         if (newQty <= 0) {
           await client.query(
             `DELETE FROM ${qIdent(p.schema)}.${qIdent(p.table)} WHERE ${qIdent(p.id)} = $1`,
@@ -126,16 +138,18 @@ async function confirmOutbound({ db, payload, mapping }) {
       }
     }
 
-    // ---- 2. Remove physical allocation rows for the confirmed SO ----
+    // 3) GAS removes allocations whose SO Number matches ANY target value.
     const a = mapping.phyAllocation;
-    await client.query(
-      `DELETE FROM ${qIdent(a.schema)}.${qIdent(a.table)}
-       WHERE upper(trim(${qIdent(a.warehouse)}::text)) = $1
-         AND upper(trim(${qIdent(a.so)}::text)) = $2`,
-      [wh, so]
-    );
+    if (targetValues.length) {
+      const placeholders = targetValues.map((_, i) => `$${i + 1}`).join(', ');
+      await client.query(
+        `DELETE FROM ${qIdent(a.schema)}.${qIdent(a.table)}
+         WHERE upper(trim(${qIdent(a.so)}::text)) IN (${placeholders})`,
+        targetValues
+      );
+    }
 
-    // ---- 3. BIN_TXIN audit trail ----
+    // 4) GAS always logs an OUTBOUND DEDUCT movement for every positive item.
     const tx = mapping.binTx;
     for (const item of items) {
       const qty = n(item.allocatedQty ?? item.allocQty);
@@ -144,19 +158,16 @@ async function confirmOutbound({ db, payload, mapping }) {
         `INSERT INTO ${qIdent(tx.schema)}.${qIdent(tx.table)}
          (${qIdent(tx.warehouse)}, ${qIdent(tx.timestamp)}, ${qIdent(tx.bin)}, ${qIdent(tx.sku)}, ${qIdent(tx.qty)}, ${qIdent(tx.mfg)}, ${qIdent(tx.type)}, ${qIdent(tx.reference)}, ${qIdent(tx.username)})
          VALUES ($1, now(), $2, $3, $4, $5, $6, $7, $8)`,
-        [wh, item.bin || '', item.sku || '', qty, item.mfgMonth || '', 'OUTBOUND DEDUCT', so || obd, payload.updatedBy || 'admin']
+        [wh, item.bin || '', item.sku || '', qty, item.mfgMonth || '', 'OUTBOUND DEDUCT', item.soNumber || payload.soNumber || payload.obdNumber || 'BATCH_CONFIRM', payload.updatedBy || 'admin']
       );
     }
 
-    // ---- 4. SAP stock effect — mandatory verified adapter ----
-    await mapping.sapDump.deduct(client, { payload, warehouse: wh, plant, so, obd, items });
-
-    // ---- 5/6. Operation Sheet + Outward MIS — mandatory verified adapters ----
-    await mapping.operationSheet.update(client, { payload, warehouse: wh, plant, so, obd, items });
-    await mapping.outwardMis.append(client, { payload, warehouse: wh, plant, so, obd, items });
-
     await client.query('COMMIT');
-    return { status: 'SUCCESS', message: `Order ${obd || so} confirmed successfully.`, transaction: 'COMMITTED' };
+    return {
+      status: 'SUCCESS',
+      message: `Order(s) ${payload.obdNumber || payload.soNumber || ''} confirmed successfully. Stock deducted and allocation updated.`,
+      transaction: 'COMMITTED'
+    };
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch (_) {}
     return { status: 'ERROR', message: error.message || String(error), transaction: 'ROLLED_BACK' };
@@ -165,4 +176,4 @@ async function confirmOutbound({ db, payload, mapping }) {
   }
 }
 
-module.exports = { confirmOutbound, norm, cleanBin, cleanSku, assertProductionMapping };
+module.exports = { confirmOutbound, norm, cleanBin, cleanSku, cleanMfg, assertProductionMapping };
