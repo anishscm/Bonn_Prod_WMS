@@ -1,0 +1,12 @@
+const assert = require('assert');
+const { deduct } = require('../inventory_transaction_model');
+const f = require('./outbound.json');
+const result = deduct(f.initial, f.request);
+assert.equal(result.stock['BB04|FG01|TEST-SKU-P6|2026-08'].qty, f.expected.stock_qty);
+assert.equal(result.alloc['BB04|SO-P6-001|TEST-SKU-P6'].qty, f.expected.allocation_qty);
+assert.equal(result.binTx.length, f.expected.bin_tx_count);
+assert.equal(result.outward.length, f.expected.outward_count);
+assert.equal(result.operation.length, f.expected.operation_count);
+assert.throws(() => deduct(f.initial, {...f.request, qty:101}), /INSUFFICIENT_STOCK/);
+console.log('PASS: successful deduction invariants');
+console.log('PASS: insufficient stock rejected');
