@@ -28,8 +28,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run outbound transaction parity harness
+      - name: Run outbound confirmation parity harness
         run: node backend/services/outboundParityService.test.js
+      - name: Run batch picking PGI parity harness
+        run: node backend/services/batchPickingParityService.test.js
       - name: Run disposable PostgreSQL transaction test
         env:
           PGPASSWORD: postgres
