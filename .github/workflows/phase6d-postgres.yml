@@ -25,6 +25,11 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run outbound transaction parity harness
+        run: node backend/services/outboundParityService.test.js
       - name: Run disposable PostgreSQL transaction test
         env:
           PGPASSWORD: postgres
