@@ -32,6 +32,8 @@ jobs:
         run: node backend/services/outboundParityService.test.js
       - name: Run batch picking PGI parity harness
         run: node backend/services/batchPickingParityService.test.js
+      - name: Run Phase 7A inward parity harness
+        run: node backend/services/inwardParityService.test.js
       - name: Run disposable PostgreSQL transaction test
         env:
           PGPASSWORD: postgres
@@ -40,3 +42,7 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase6d_wms_shape_transaction_test.sql
+      - name: Run Phase 7A Stock_Entry compatibility schema
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase7/phase7a_stock_entry_compatibility.sql
