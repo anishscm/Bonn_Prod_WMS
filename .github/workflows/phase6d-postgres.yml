@@ -1,0 +1,31 @@
+name: Phase 6D PostgreSQL Transaction Test
+
+on:
+  push:
+    branches: [phase-6b-inventory-parity]
+  pull_request:
+    branches: [main]
+
+jobs:
+  postgres-transaction-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: parity_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d parity_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run disposable PostgreSQL transaction test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase6d_pg_transaction_test.sql

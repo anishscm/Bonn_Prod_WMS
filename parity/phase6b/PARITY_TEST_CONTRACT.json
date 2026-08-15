@@ -1,0 +1,29 @@
+{
+  "phase": "6B",
+  "status": "TEST_CONTRACT",
+  "inward_single_line": {
+    "input": {"plant": "BB04", "sku": "TEST-SKU", "qty": 100, "mfg_month": "2026-08", "bin": "FG01"},
+    "expected_side_effects": [
+      "stock_entry_compat row",
+      "inward_mis row or equivalent",
+      "phy_stk_entry quantity increases",
+      "bin_txin transaction exists"
+    ],
+    "atomicity": "all-or-nothing"
+  },
+  "outbound_single_line": {
+    "input": {"plant": "BB04", "sku": "TEST-SKU", "qty": 10, "so": "900001"},
+    "expected_side_effects": [
+      "phy_stk_entry quantity decreases",
+      "matching phy_stk_allocation rows are released as Gold Master requires",
+      "operation/outward side effects match Gold Master",
+      "bin_txin movement record exists"
+    ],
+    "atomicity": "all-or-nothing"
+  },
+  "concurrency": {
+    "scenario": "two simultaneous deductions against the same SKU/bin/MFG",
+    "expected": "no negative stock and no double deduction",
+    "required": "row locking on affected stock rows inside one transaction"
+  }
+}
