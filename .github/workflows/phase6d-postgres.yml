@@ -40,6 +40,8 @@ jobs:
         run: node backend/services/allocationParityService.test.js
       - name: Run Phase 8B order allocation calculation parity harness
         run: node backend/services/orderAllocationParityService.test.js
+      - name: Run Phase 8C order allocation persistence parity harness
+        run: node backend/services/orderPersistenceParityService.test.js
       - name: Create Phase 7A Stock_Entry compatibility schema
         env:
           PGPASSWORD: postgres
