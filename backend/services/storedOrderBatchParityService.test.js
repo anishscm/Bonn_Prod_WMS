@@ -50,9 +50,9 @@ const dump=[
  ],dumpRows:local,isManualAllocation:false,globalPgi:'1234567890',timestamp:'ts'});
  assert.strictEqual(r.results['200001'].batchAllocations[0],'A[B1(30),B2(40)]');
  assert.strictEqual(r.results['200002'].batchAllocations[0],'A[B2(10),B3(40)]');
- assert.strictEqual(r.finalDumpRows[0][4],JSON.stringify([]));
- assert.strictEqual(r.finalDumpRows[1][5],0);
- assert.strictEqual(r.finalDumpRows[2][5],0);
+ assert.strictEqual(r.finalDumpRows.length,1);
+ assert.strictEqual(r.finalDumpRows[0][2],'B');
+ assert.strictEqual(r.finalDumpRows[0][5],10);
 }
 
 assert.deepStrictEqual(parseBatches('[{"batch":"X","qty":2}]'),[{batch:'X',qty:2}]);
