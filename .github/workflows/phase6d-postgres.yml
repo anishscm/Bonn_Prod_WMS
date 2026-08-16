@@ -2,7 +2,7 @@ name: Phase 6D PostgreSQL Transaction Test
 
 on:
   push:
-    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity, phase-8e-dispatched-register, phase-8f-e2e-stored-order-flow]
+    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity, phase-8e-dispatched-register, phase-8f-e2e-stored-order-flow, phase-8h-server-side-adapter]
   pull_request:
     branches: [main]
 
@@ -41,6 +41,7 @@ jobs:
           node backend/services/dispatchedRegisterParityService.test.js
           node backend/services/e2eStoredOrderFlowParityService.test.js
           node backend/services/phase8fTransactionParityService.test.js
+          node backend/services/phase8hProductionTransactionAdapter.test.js
       - name: Create Phase 8E dispatched-register compatibility schema
         env:
           PGPASSWORD: postgres
