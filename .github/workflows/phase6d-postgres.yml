@@ -2,7 +2,7 @@ name: Phase 6D PostgreSQL Transaction Test
 
 on:
   push:
-    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation]
+    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity]
   pull_request:
     branches: [main]
 
@@ -36,6 +36,8 @@ jobs:
         run: node backend/services/inwardParityService.test.js
       - name: Run Phase 7C inbound confirmation parity harness
         run: node backend/services/inboundConfirmationParityService.test.js
+      - name: Run Phase 8A allocation reset parity harness
+        run: node backend/services/allocationParityService.test.js
       - name: Create Phase 7A Stock_Entry compatibility schema
         env:
           PGPASSWORD: postgres
