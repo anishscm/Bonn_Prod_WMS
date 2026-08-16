@@ -23,3 +23,5 @@ jobs:
         run: node tests/phase9e_compatibility.test.js
       - name: Run Phase 9G controlled comparison suite
         run: node backend/services/gasSqlControlledComparisonService.test.js
+      - name: Run Phase 9H controlled fixture safety gate
+        run: node tests/phase9h_controlled_fixture.test.js
