@@ -38,6 +38,14 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase7/phase7a_stock_entry_compatibility.sql
+      - name: Create Phase 7B inward MIS mapping
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase7b_inward_mis_mapping.sql
+      - name: Run Phase 7B inward MIS mapping test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase7b_inward_mis_mapping_test.sql
       - name: Run disposable PostgreSQL transaction test
         env:
           PGPASSWORD: postgres
