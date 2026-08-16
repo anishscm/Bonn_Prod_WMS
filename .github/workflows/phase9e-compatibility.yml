@@ -1,0 +1,23 @@
+name: Phase 9E Compatibility
+
+on:
+  push:
+    branches:
+      - phase-9c-sql-compatibility-layer
+  pull_request:
+    branches:
+      - main
+      - phase-9c-sql-compatibility-layer
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run Phase 9E suite
+        run: node tests/phase9e_compatibility.test.js
