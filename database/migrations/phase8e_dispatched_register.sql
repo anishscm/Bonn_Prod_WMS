@@ -7,6 +7,8 @@
 -- vehicle, driver contact, dispatch quantity/boxes, contractor, supervisor,
 -- operator, dispatch status and dispatch timestamp.
 
+CREATE SCHEMA IF NOT EXISTS wms;
+
 CREATE TABLE IF NOT EXISTS wms.dispatched_register_compat (
     id BIGSERIAL PRIMARY KEY,
     warehouse TEXT NOT NULL DEFAULT '',
