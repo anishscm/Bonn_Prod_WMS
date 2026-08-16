@@ -1,0 +1,86 @@
+name: Phase 6D PostgreSQL Transaction Test
+
+on:
+  push:
+    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity, phase-8e-dispatched-register, phase-8f-e2e-stored-order-flow]
+  pull_request:
+    branches: [main]
+
+jobs:
+  postgres-transaction-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: parity_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d parity_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run outbound confirmation parity harness
+        run: node backend/services/outboundParityService.test.js
+      - name: Run batch picking PGI parity harness
+        run: node backend/services/batchPickingParityService.test.js
+      - name: Run Phase 7A inward parity harness
+        run: node backend/services/inwardParityService.test.js
+      - name: Run Phase 7C inbound confirmation parity harness
+        run: node backend/services/inboundConfirmationParityService.test.js
+      - name: Run Phase 8A allocation reset parity harness
+        run: node backend/services/allocationParityService.test.js
+      - name: Run Phase 8B order allocation calculation parity harness
+        run: node backend/services/orderAllocationParityService.test.js
+      - name: Run Phase 8C order allocation persistence parity harness
+        run: node backend/services/orderPersistenceParityService.test.js
+      - name: Run Phase 8D stored-order FIFO batch parity harness
+        run: node backend/services/storedOrderBatchParityService.test.js
+      - name: Run Phase 8E dispatched-register mapping parity harness
+        run: node backend/services/dispatchedRegisterParityService.test.js
+      - name: Run Phase 8F end-to-end stored-order flow parity harness
+        run: node backend/services/e2eStoredOrderFlowParityService.test.js
+      - name: Create Phase 8E dispatched-register compatibility schema
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f database/migrations/phase8e_dispatched_register.sql
+      - name: Run Phase 8E dispatched-register SQL contract test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase8/phase8e_dispatched_register_test.sql
+      - name: Create Phase 8F end-to-end compatibility schema
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f database/migrations/phase8f_e2e_stored_order_flow.sql
+      - name: Run Phase 8F SQL end-to-end contract test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase8/phase8f_e2e_stored_order_flow_test.sql
+      - name: Create Phase 7A Stock_Entry compatibility schema
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase7/phase7a_stock_entry_compatibility.sql
+      - name: Create Phase 7B inward MIS mapping
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase7b_inward_mis_mapping.sql
+      - name: Run Phase 7B inward MIS mapping test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase7b_inward_mis_mapping_test.sql
+      - name: Run disposable PostgreSQL transaction test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase6d_pg_transaction_test.sql
+      - name: Run WMS-shaped transaction parity contract
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase6/phase6d_wms_shape_transaction_test.sql
