@@ -2,7 +2,7 @@ name: Phase 6D PostgreSQL Transaction Test
 
 on:
   push:
-    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity, phase-8e-dispatched-register]
+    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity, phase-8e-dispatched-register, phase-8f-e2e-stored-order-flow]
   pull_request:
     branches: [main]
 
@@ -28,24 +28,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run outbound confirmation parity harness
-        run: node backend/services/outboundParityService.test.js
-      - name: Run batch picking PGI parity harness
-        run: node backend/services/batchPickingParityService.test.js
-      - name: Run Phase 7A inward parity harness
-        run: node backend/services/inwardParityService.test.js
-      - name: Run Phase 7C inbound confirmation parity harness
-        run: node backend/services/inboundConfirmationParityService.test.js
-      - name: Run Phase 8A allocation reset parity harness
-        run: node backend/services/allocationParityService.test.js
-      - name: Run Phase 8B order allocation calculation parity harness
-        run: node backend/services/orderAllocationParityService.test.js
-      - name: Run Phase 8C order allocation persistence parity harness
-        run: node backend/services/orderPersistenceParityService.test.js
-      - name: Run Phase 8D stored-order FIFO batch parity harness
-        run: node backend/services/storedOrderBatchParityService.test.js
-      - name: Run Phase 8E dispatched-register mapping parity harness
-        run: node backend/services/dispatchedRegisterParityService.test.js
+      - name: Run Phase 6-8 Node parity gates
+        run: |
+          node backend/services/outboundParityService.test.js
+          node backend/services/batchPickingParityService.test.js
+          node backend/services/inwardParityService.test.js
+          node backend/services/inboundConfirmationParityService.test.js
+          node backend/services/allocationParityService.test.js
+          node backend/services/orderAllocationParityService.test.js
+          node backend/services/orderPersistenceParityService.test.js
+          node backend/services/storedOrderBatchParityService.test.js
+          node backend/services/dispatchedRegisterParityService.test.js
+          node backend/services/e2eStoredOrderFlowParityService.test.js
+          node backend/services/phase8fTransactionParityService.test.js
       - name: Create Phase 8E dispatched-register compatibility schema
         env:
           PGPASSWORD: postgres
@@ -54,6 +49,14 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase8/phase8e_dispatched_register_test.sql
+      - name: Create Phase 8F end-to-end compatibility schema
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f database/migrations/phase8f_e2e_stored_order_flow.sql
+      - name: Run Phase 8F end-to-end SQL contract test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase8/phase8f_e2e_stored_order_flow_test.sql
       - name: Create Phase 7A Stock_Entry compatibility schema
         env:
           PGPASSWORD: postgres
