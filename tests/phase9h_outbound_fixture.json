@@ -1,0 +1,30 @@
+{
+  "test_id": "PH9H-OUT-001",
+  "source_function": "opConfirmOutboundDeductStock",
+  "mode": "CONTROLLED_NON_PRODUCTION",
+  "input": {
+    "warehouse": "BB04",
+    "so_number": "TEST-SO-P9H",
+    "obd": "12345678",
+    "sku": "TEST-SKU-P9H",
+    "bin": "TEST-FG01",
+    "mfg_month": "2026-08",
+    "requested_qty": 10
+  },
+  "seed_state": {
+    "phy_stk_entry_qty": 100,
+    "phy_stk_allocation_qty": 20
+  },
+  "gas_capture": {
+    "response": null,
+    "state": null,
+    "captured": false
+  },
+  "sql_capture": {
+    "response": null,
+    "state": null,
+    "captured": false
+  },
+  "parity_status": "NOT_CAPTURED",
+  "production_write_enabled": false
+}
