@@ -2,7 +2,7 @@ name: Phase 6D PostgreSQL Transaction Test
 
 on:
   push:
-    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity]
+    branches: [phase-6b-inventory-parity, phase-6d-postgres-parity, phase-7c-inbound-confirmation, phase-8-allocation-parity, phase-8e-dispatched-register]
   pull_request:
     branches: [main]
 
@@ -44,6 +44,16 @@ jobs:
         run: node backend/services/orderPersistenceParityService.test.js
       - name: Run Phase 8D stored-order FIFO batch parity harness
         run: node backend/services/storedOrderBatchParityService.test.js
+      - name: Run Phase 8E dispatched-register mapping parity harness
+        run: node backend/services/dispatchedRegisterParityService.test.js
+      - name: Create Phase 8E dispatched-register compatibility schema
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f database/migrations/phase8e_dispatched_register.sql
+      - name: Run Phase 8E dispatched-register SQL contract test
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d parity_test -v ON_ERROR_STOP=1 -f tests/phase8/phase8e_dispatched_register_test.sql
       - name: Create Phase 7A Stock_Entry compatibility schema
         env:
           PGPASSWORD: postgres
