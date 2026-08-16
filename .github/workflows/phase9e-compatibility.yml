@@ -21,3 +21,5 @@ jobs:
           node-version: '20'
       - name: Run Phase 9E suite
         run: node tests/phase9e_compatibility.test.js
+      - name: Run Phase 9G controlled comparison suite
+        run: node backend/services/gasSqlControlledComparisonService.test.js
